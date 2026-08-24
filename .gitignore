@@ -1,0 +1,18 @@
+# Virtual Environment
+venv/
+env/
+.venv/
+
+# Python Cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environment Variables (DO NOT COMMIT!)
+.env
+
+# Output files & Directories
+LITERATURE_REVIEW.md
+articles/
+*.log
