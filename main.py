@@ -40,7 +40,7 @@ def main():
     logger.info("\n[2/4] Downloading UNIQUE PDFs for Deep RAG ingestion...")
     download_pdfs(unique_papers, output_dir="articles")
 
-    # 3. RUNNING SUB-AGENTS (We pass the domain-specific lists so agents maintain their focus)
+    # 3. RUNNING SUB-AGENTS
     logger.info("\n[3/4] Engaging AI Expert Sub-Agents...")
     kinematic_result = analyze_kinematic(kinematic_papers)
     physics_diff_result = analyze_physics_diffusion(physics_diff_papers)
@@ -68,7 +68,12 @@ def main():
             f.write("---\n\n")
             f.write("# MASTER LITERATURE REVIEW (Orchestrator Output)\n\n")
             f.write(final_review)
-        logger.info(f"\n✅ Pipeline Complete! The review is in: {output_path}")
+        logger.info(f"\n✅ Pipeline Complete! Initial review saved in: {output_path}")
+        
+        # 6. AUTO-ENRICHMENT STEP
+        logger.info("\n[Auto-Step] Running OpenAlex Academic Enrichment...")
+        os.system("python3 enrich_review.py")
+        
     except Exception as e:
         logger.error(f"[!] Failed to write review file: {e}")
 

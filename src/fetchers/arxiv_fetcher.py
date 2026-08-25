@@ -5,10 +5,10 @@ from src.utils.logger import logger
 
 def fetch_arxiv_papers(query="text-to-motion", max_results=5):
     """
-    Fetches paper metadata from the ArXiv API, including URLs and PDF links.
+    Fetches paper metadata from the ArXiv API, sorted by relevance to find high-impact core papers.
     """
     logger.info(f"[*] Searching ArXiv for query: '{query}'...")
-    url = f'http://export.arxiv.org/api/query?search_query=all:{urllib.parse.quote(query)}&start=0&max_results={max_results}&sortBy=submittedDate&sortOrder=descending'
+    url = f'http://export.arxiv.org/api/query?search_query=all:{urllib.parse.quote(query)}&start=0&max_results={max_results}&sortBy=relevance&sortOrder=descending'
     
     papers = []
     try:

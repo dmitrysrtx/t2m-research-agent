@@ -1,11 +1,11 @@
-.PHONY: all setup run clean
+.PHONY: all setup run enrich clean
 
 # Default python
 PYTHON = python3
 VENV_DIR = venv
 VENV_BIN = $(VENV_DIR)/bin
 
-all: setup run
+all: setup run enrich
 
 # Create environment and install dependencies
 setup:
@@ -19,10 +19,15 @@ setup:
 		echo "[!] Created .env file. Please add your API key before running."; \
 	fi
 
-# Run the research agent
+# Run the research agent (fetches and analyzes papers)
 run:
 	@echo "[*] Running the Multi-Agent Research Framework..."
 	$(VENV_BIN)/python main.py
+
+# Enrich the generated literature review with OpenAlex publication metadata
+enrich:
+	@echo "[*] Enriching Literature Review with OpenAlex metadata..."
+	$(VENV_BIN)/python enrich_review.py
 
 # Clean up
 clean:
