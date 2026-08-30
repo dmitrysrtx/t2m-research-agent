@@ -40,7 +40,18 @@ def run_agent(system_prompt, user_prompt):
 def format_papers_for_prompt(papers_data):
     prompt = f"Analyze the following {len(papers_data)} papers:\n\n"
     for i, p in enumerate(papers_data):
-        prompt += f"--- Paper {i+1} ---\nTitle: {p['title']} ({p['year']})\nURL: {p['url']}\nAbstract: {p['abstract']}\n\n"
+        citations = p.get('citations', 'N/A')
+        impact_factor = p.get('impact_factor', 'N/A')
+        github_url = p.get('github_url', 'N/A')
+        prompt += (
+            f"--- Paper {i+1} ---\n"
+            f"Title: {p.get('title', 'N/A')} ({p.get('year', 'N/A')})\n"
+            f"Citations: {citations}\n"
+            f"Impact Factor / Rank: {impact_factor}\n"
+            f"GitHub Code Repo: {github_url}\n"
+            f"URL: {p.get('url', 'N/A')}\n"
+            f"Abstract: {p.get('abstract', 'N/A')}\n\n"
+        )
     return prompt
 
 ANTI_LAZY_RULE = "\nCRITICAL INSTRUCTION: You MUST include EVERY single paper provided in the input text in your table. Do not skip, summarize, or omit ANY paper. If there are 15 papers in the prompt, there must be 15 rows in your table!"
@@ -50,28 +61,32 @@ KINEMATIC_SYSTEM_PROMPT = """
 You are a highly specialized AI research agent analyzing kinematic Text-to-Motion models.
 Extract core information from the provided abstracts and return a structured Markdown table.
 Format the "Paper Title & Year" column as a Markdown hyperlink: [Title (Year)](URL).
-Columns: | Paper Title & Year | Architecture (Diffusion/GPT) | Pose Skeleton Used | Key Metrics (FID, etc.) | Limitations |
+Format the "Code Repository (GitHub)" column as a Markdown hyperlink if a valid URL is provided, or "N/A" if unavailable.
+Columns: | Paper Title & Year | Citations | Impact Factor | Code Repository (GitHub) | Architecture (Diffusion/GPT) | Pose Skeleton Used | Key Metrics (FID, etc.) | Limitations |
 Limit response to ONLY the table.""" + ANTI_LAZY_RULE
 
 PHYSICS_DIFFUSION_SYSTEM_PROMPT = """
 You are an expert in Physics-Guided Generative Motion Models.
 Extract core information from the provided abstracts and return a structured Markdown table.
 Format the "Paper Title & Year" column as a Markdown hyperlink: [Title (Year)](URL).
-Columns: | Paper Title & Year | Physics Integration Method | Physics Engine (MuJoCo/Isaac) | Physical Metrics | Limitations |
+Format the "Code Repository (GitHub)" column as a Markdown hyperlink if a valid URL is provided, or "N/A" if unavailable.
+Columns: | Paper Title & Year | Citations | Impact Factor | Code Repository (GitHub) | Physics Integration Method | Physics Engine (MuJoCo/Isaac) | Physical Metrics | Limitations |
 Limit response to ONLY the table.""" + ANTI_LAZY_RULE
 
 RL_CONTROL_SYSTEM_PROMPT = """
 You are an expert specializing in Reinforcement Learning for physics-based character control.
 Extract core information from the provided abstracts and return a structured Markdown table.
 Format the "Paper Title & Year" column as a Markdown hyperlink: [Title (Year)](URL).
-Columns: | Paper Title & Year | RL Algorithm (PPO, etc.) | Reward Function Components | Simulation Environment | Limitations |
+Format the "Code Repository (GitHub)" column as a Markdown hyperlink if a valid URL is provided, or "N/A" if unavailable.
+Columns: | Paper Title & Year | Citations | Impact Factor | Code Repository (GitHub) | RL Algorithm (PPO, etc.) | Reward Function Components | Simulation Environment | Limitations |
 Limit response to ONLY the table.""" + ANTI_LAZY_RULE
 
 MEDIAPIPE_POSE_SYSTEM_PROMPT = """
 You are an expert in computer vision, 3D pose estimation, and vision-to-pose bridging.
 Extract core information from the provided abstracts and return a structured Markdown table.
 Format the "Paper Title & Year" column as a Markdown hyperlink: [Title (Year)](URL).
-Columns: | Paper Title & Year | Pose Representation (MediaPipe/SMPL) | Translation Mechanism | Robustness to Noise | Limitations |
+Format the "Code Repository (GitHub)" column as a Markdown hyperlink if a valid URL is provided, or "N/A" if unavailable.
+Columns: | Paper Title & Year | Citations | Impact Factor | Code Repository (GitHub) | Pose Representation (MediaPipe/SMPL) | Translation Mechanism | Robustness to Noise | Limitations |
 Limit response to ONLY the table.""" + ANTI_LAZY_RULE
 
 

@@ -15,7 +15,7 @@ Your task is to compile a comprehensive, academic Literature Review Chapter.
 Include the following sections:
 1. Executive Summary
 2. Analysis of Existing Approaches (Synthesize the trends from the 4 sub-agent reports)
-3. Consolidated Metrics & Evaluation Trends
+3. Consolidated Comparative Table (Must preserve columns: Paper Title & Year, Citations, Impact Factor, Code Repository (GitHub), Method/Architecture, Key Metrics, Limitations)
 4. Research Gap & Motivation (Highlight why combining kinematic sequence generation with RL control in physics simulation solves current limitations)
 
 Ensure the text is strictly academic, highly readable, and formatted in Markdown.

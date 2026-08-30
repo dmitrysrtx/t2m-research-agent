@@ -185,23 +185,7 @@ def execute_t2m_research(
         custom_prompt=orchestrator_prompt
     )
 
-    if save_output_file:
-        output_path = "LITERATURE_REVIEW.md"
-        try:
-            with open(output_path, "w", encoding="utf-8") as f:
-                f.write(f"# RAW DATA (Total Unique Papers processed: {len(unique_papers)})\n\n")
-                f.write("## 1. Kinematic Models\n" + kinematic_result + "\n\n")
-                f.write("## 2. Physics Diffusion\n" + physics_result + "\n\n")
-                f.write("## 3. RL Character Control\n" + rl_result + "\n\n")
-                f.write("## 4. Pose Representation (MediaPipe/SMPL)\n" + pose_result + "\n\n")
-                f.write("---\n\n")
-                f.write("# MASTER LITERATURE REVIEW (Orchestrator Output)\n\n")
-                f.write(final_review)
-            logger.info(f"\n✅ Pipeline Complete! Review saved in: {output_path}")
-        except Exception as e:
-            logger.error(f"[!] Failed to write review file: {e}")
-
-    # Build response for Open WebUI
+    # Build response for Open WebUI & File Saving
     summary_header = (
         f"# 🎓 T2M Academic Research Report\n\n"
         f"**Query:** `{query[:100]}...` | **Extracted Search Terms:** `{clean_query}` | **Unique Papers Processed:** {len(unique_papers)} | **PDFs Secured:** {download_count}\n"
@@ -220,5 +204,22 @@ def execute_t2m_research(
         f"# 🏛️ Master Literature Synthesis (Orchestrator)\n\n"
         f"{final_review}"
     )
+
+    if save_output_file:
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        output_path = os.path.join(project_root, "literature_review.md")
+        articles_dir = os.path.join(project_root, "articles")
+        os.makedirs(articles_dir, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamped_path = os.path.join(articles_dir, f"literature_review_{timestamp}.md")
+        
+        try:
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(summary_header)
+            with open(timestamped_path, "w", encoding="utf-8") as f:
+                f.write(summary_header)
+            logger.info(f"\n✅ Pipeline Complete! Review saved in: {output_path} and {timestamped_path}")
+        except Exception as e:
+            logger.error(f"[!] Failed to write review file: {e}")
 
     return summary_header

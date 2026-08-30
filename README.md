@@ -2,23 +2,35 @@
 
 An automated multi-agent research framework designed to discover, summarize, and synthesize academic papers on **Text-to-Motion generation, Physics-based animation, and Reinforcement Learning**. 
 
-Includes priority search for **IEEE Xplore** (with Afeka EZproxy institutional authentication), **ArXiv**, and OpenAlex verification.
+Includes multi-fetcher academic search across **Google Scholar**, **IEEE Xplore** (with Afeka EZproxy institutional authentication), **ArXiv**, and **Semantic Scholar**.
 
 ---
 
 ## 🌟 Key Features
 
-1. **IEEE Xplore + Institutional EZproxy Support:**
-   - Priority metadata retrieval via OpenAlex and IEEE Xplore REST API.
-   - Automatic conversion of paper URLs to institutional EZproxy URLs (`ieeexplore-ieee-org.ezproxy.afeka.ac.il`).
-   - Cookie session extraction via Playwright (`ezproxy_cookies.json`).
-2. **Multi-Agent RAG Pipeline:**
-   - AI Sub-Agents for specialized domain analysis: *Kinematic Models, Physics & Diffusion, RL Character Control, 3D Pose Vision*.
-   - **Master Orchestrator:** Synthesizes domain outputs into an academic Literature Review chapter highlighting research gaps.
-3. **Academic Credibility Verification (`enrich_review.py`):**
-   - CrossRef API integration for citation counts, DOIs, and peer-review venue validation.
-4. **Open WebUI Integration (`openwebui/`):**
-   - Ready-to-import **Open WebUI Pipeline** (`openwebui/t2m_pipeline.py`) and **Tool** (`openwebui/t2m_openwebui_tool.py`) for chatting with the agent directly in Open WebUI.
+1. **Multi-Source Academic Fetchers:**
+   - **Google Scholar:** Direct title and abstract indexing via SerpAPI / OpenAlex fallback.
+   - **IEEE Xplore + Institutional EZproxy Support:** Priority metadata retrieval via OpenAlex and IEEE Xplore REST API.
+   - **ArXiv:** Pre-print paper discovery.
+   - **Semantic Scholar:** Deep academic paper and citation graph indexing.
+
+2. **Automated Dual-File Saving:**
+   - Whether triggered via CLI (`main.py`) or OpenWebUI Pipeline (`t2m_pipeline.py`), the generated synthesis report is automatically duplicated and saved to:
+     - `literature_review.md` (root directory)
+     - `articles/literature_review_YYYYMMDD_HHMMSS.md` (timestamped archive)
+
+3. **Enhanced Paper Metadata & Comparative Tables:**
+   Every processed paper extracts and synthesizes 3 crucial metadata dimensions:
+   - **Citations:** Real-time citation count from academic APIs.
+   - **Impact Factor / Venue Rank:** Venue classification (e.g. `CVPR (Top-tier IEEE/CVF)`, `Q1 / High Impact`).
+   - **Code Repository (GitHub):** Open-source code repository URL (or `N/A` if not published).
+
+4. **Multi-Agent RAG Pipeline:**
+   - **AI Sub-Agents:** *Kinematic Models, Physics & Diffusion, RL Character Control, 3D Pose Vision*.
+   - **Master Orchestrator:** Synthesizes sub-agent reports into an academic Literature Review chapter with comparative tables and research gaps.
+
+5. **Open WebUI Pipelines & Valves Integration (`openwebui/`):**
+   - Configurable Valves for enabling/disabling fetchers (`ENABLE_SCHOLAR`, `ENABLE_IEEE`, `ENABLE_ARXIV`, `ENABLE_SEMANTIC_SCHOLAR`), adjusting paper counts, and customizing system prompts.
 
 ---
 
@@ -28,22 +40,24 @@ Includes priority search for **IEEE Xplore** (with Afeka EZproxy institutional a
 t2m-research-agent/
 ├── src/                          # CORE PYTHON SYSTEM
 │   ├── fetchers/                 
+│   │   ├── scholar_fetcher.py    # Google Scholar Index Fetcher
 │   │   ├── ieee_fetcher.py       # IEEE Xplore & OpenAlex Metadata Search
 │   │   ├── arxiv_fetcher.py      # ArXiv Preprint Fetcher
-│   │   └── semantic_scholar_fetcher.py
+│   │   └── semantic_scholar_fetcher.py # Semantic Scholar API
 │   ├── agents/                   
 │   │   ├── orchestrator.py       # Master Orchestrator LLM Agent
 │   │   └── sub_agents.py         # Specialized Domain Sub-Agents
-│   └── utils/                    
-│       ├── ezproxy_auth.py       # Institutional URL Rewriter & Cookie Session Manager
-│       ├── playwright_login.py   # Automated Session Login Helper
-│       ├── pdf_downloader.py     # PDF Downloader with EZproxy & ArXiv Fallback
-│       └── logger.py             # System Logger
+│   ├── utils/                    
+│   │   ├── paper_utils.py        # GitHub link extractor & Impact Factor estimator
+│   │   ├── ezproxy_auth.py       # Institutional URL Rewriter & Cookie Session Manager
+│   │   ├── pdf_downloader.py     # PDF Downloader with EZproxy & ArXiv Fallback
+│   │   └── logger.py             # System Logger
+│   └── core/
+│       └── pipeline_runner.py    # Core execution pipeline
 ├── openwebui/                    # OPEN WEBUI INTEGRATION LAYER
-│   ├── t2m_pipeline.py           # Open WebUI Custom Pipeline Wrapper
+│   ├── t2m_pipeline.py           # Open WebUI Custom Pipeline Wrapper with Valves
 │   └── t2m_openwebui_tool.py     # Open WebUI Importable Tool
-├── LITERATURE_REVIEW.md          # Generated Literature Review & Peer-Review Table
-├── enrich_review.py              # CrossRef Academic Credibility Enricher
+├── literature_review.md          # Generated Literature Review & Peer-Review Table
 ├── main.py                       # CLI Execution Entry Point
 ├── requirements.txt              # Dependency Specifications
 └── README.md                     # Documentation
@@ -54,10 +68,6 @@ t2m-research-agent/
 ## ⚙️ Setup & Installation
 
 ### 1. Environment Setup
-```bash
-make setup
-```
-Or manually:
 ```bash
 python3 -m venv venv
 source venv/bin/activate
@@ -76,41 +86,25 @@ EZPROXY_DOMAIN=ezproxy.afeka.ac.il
 
 ---
 
-## 🔐 Institutional Access (IEEE Xplore / Afeka EZproxy)
-
-To enable seamless full-text IEEE PDF downloads:
-
-1. **Option A (Playwright Session Helper):**
-   Run the login script to authenticate via browser:
-   ```bash
-   python3 -m src.utils.playwright_login
-   ```
-   This saves an authenticated session into `ezproxy_cookies.json`.
-
-2. **Option B (Export Cookies manually):**
-   Export your browser cookies while logged into Afeka EZproxy and save them as `ezproxy_cookies.json` in the project root.
-
----
-
 ## 🚀 Running the Framework
 
 ### Option 1: Command Line Interface (CLI)
-```bash
-make run
-```
-or:
 ```bash
 python3 main.py
 ```
 
 ### Option 2: Open WebUI Integration
 1. Open your **Open WebUI** dashboard.
-2. Go to **Workspace -> Tools**, click **+ Import**, and upload `openwebui/t2m_openwebui_tool.py`.
-3. Or go to **Workspace -> Pipelines**, and register `openwebui/t2m_pipeline.py`.
-4. Select `T2M Research Agent` from the model dropdown and start chatting!
+2. Go to **Admin Panel -> Pipelines**.
+3. Select `t2m_pipeline (pipe)` and configure **Valves**:
+   - `ENABLE_SCHOLAR` (Toggle Google Scholar)
+   - `ENABLE_IEEE` (Toggle IEEE Xplore)
+   - `MAX_RESULTS_PER_DOMAIN` (Set results per sub-agent domain)
+4. Start a chat and receive full Markdown synthesis + automatic `literature_review.md` saved on host!
 
 ---
 
 ## 📊 Outputs & Artifacts
-- `articles/`: Directory containing secured PDF files (IEEE + ArXiv).
-- `LITERATURE_REVIEW.md`: Comprehensive review with structured comparison tables and CrossRef academic verification.
+- `literature_review.md`: Complete literature review report saved in root directory.
+- `articles/literature_review_YYYYMMDD_HHMMSS.md`: Timestamped archived copies of literature reviews.
+- `articles/*.pdf`: Directory containing downloaded full-text PDF files.
