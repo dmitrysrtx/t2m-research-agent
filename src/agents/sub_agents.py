@@ -1,9 +1,20 @@
 from openai import OpenAI
 import os
 import sys
+import importlib.util
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-import config
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
+
+# Safely load local config.py to avoid collisions with framework 'config' modules
+config_file_path = os.path.join(ROOT_DIR, "config.py")
+if os.path.exists(config_file_path):
+    spec = importlib.util.spec_from_file_location("t2m_agent_config", config_file_path)
+    config = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(config)
+else:
+    import config
 
 client = OpenAI(
     base_url=config.BASE_URL,
