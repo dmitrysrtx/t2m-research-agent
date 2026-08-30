@@ -1,36 +1,92 @@
 """
-title: T2M Academic Research Pipeline (IEEE Strictly)
+title: T2M Academic Research Pipeline (Configurable Valves)
 author: Dmitry Strizhak
-version: 1.2.0
+version: 2.0.0
 license: MIT
-description: Multi-agent academic research pipeline strictly searching IEEE Xplore (EZproxy) with LLM Sub-Agents.
+description: Multi-agent academic research pipeline with configurable sub-agent prompts and search engine toggles.
 """
 
 import os
 import sys
-from typing import List, Union, Generator, Iterator
+from typing import List, Union, Generator, Iterator, Optional
+from pydantic import BaseModel, Field
 
-# Ensure project root is in python path
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
+# Ensure agent project directory is in python path
+AGENT_PATHS = [
+    "/app/t2m-agent",
+    "/home/user/projects/RL/Maya_Project/t2m-research-agent",
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+]
+for p in AGENT_PATHS:
+    if os.path.exists(p) and p not in sys.path:
+        sys.path.insert(0, p)
 
-from src.fetchers.ieee_fetcher import fetch_ieee_papers
-from src.utils.pdf_downloader import download_pdfs
+from src.core.pipeline_runner import execute_t2m_research
 from src.agents.sub_agents import (
-    analyze_kinematic, 
-    analyze_physics_diffusion, 
-    analyze_rl_control, 
-    analyze_pose_vision
+    KINEMATIC_SYSTEM_PROMPT,
+    PHYSICS_DIFFUSION_SYSTEM_PROMPT,
+    RL_CONTROL_SYSTEM_PROMPT,
+    MEDIAPIPE_POSE_SYSTEM_PROMPT
 )
-from src.agents.orchestrator import synthesize_literature_review
+from src.agents.orchestrator import ORCHESTRATOR_SYSTEM_PROMPT
 
 class Pipeline:
+    class Valves(BaseModel):
+        ENABLE_IEEE: Optional[bool] = Field(
+            default=True,
+            description="Enable paper searching via IEEE Xplore (EZproxy authentication required)"
+        )
+        ENABLE_SCHOLAR: Optional[bool] = Field(
+            default=False,
+            description="Enable academic paper searching via Google Scholar Index"
+        )
+        ENABLE_ARXIV: Optional[bool] = Field(
+            default=False,
+            description="Enable open preprint searching via ArXiv API"
+        )
+        ENABLE_SEMANTIC_SCHOLAR: Optional[bool] = Field(
+            default=False,
+            description="Enable academic paper searching via Semantic Scholar API"
+        )
+        MAX_RESULTS_PER_DOMAIN: Optional[int] = Field(
+            default=5,
+            description="Maximum paper results to retrieve per sub-agent domain"
+        )
+        EZPROXY_COOKIE: Optional[str] = Field(
+            default="",
+            description="Raw Cookie header string for EZproxy authentication (e.g., ezproxy=...; JSESSIONID=...)"
+        )
+        EZPROXY_DOMAIN: Optional[str] = Field(
+            default="ezproxy.afeka.ac.il",
+            description="Institutional EZproxy domain name"
+        )
+        KINEMATIC_PROMPT: Optional[str] = Field(
+            default=KINEMATIC_SYSTEM_PROMPT,
+            description="System Prompt for Kinematic Motion Sub-Agent (Markdown supported)"
+        )
+        PHYSICS_PROMPT: Optional[str] = Field(
+            default=PHYSICS_DIFFUSION_SYSTEM_PROMPT,
+            description="System Prompt for Physics & Diffusion Sub-Agent (Markdown supported)"
+        )
+        RL_PROMPT: Optional[str] = Field(
+            default=RL_CONTROL_SYSTEM_PROMPT,
+            description="System Prompt for Reinforcement Learning Control Sub-Agent (Markdown supported)"
+        )
+        POSE_PROMPT: Optional[str] = Field(
+            default=MEDIAPIPE_POSE_SYSTEM_PROMPT,
+            description="System Prompt for 3D Pose & Vision Sub-Agent (Markdown supported)"
+        )
+        ORCHESTRATOR_PROMPT: Optional[str] = Field(
+            default=ORCHESTRATOR_SYSTEM_PROMPT,
+            description="System Prompt for Master Orchestrator Synthesizer (Markdown supported)"
+        )
+
     def __init__(self):
-        self.name = "T2M Research Agent (IEEE Strictly + EZproxy)"
+        self.name = "T2M Multi-Agent Academic Pipeline"
+        self.valves = self.Valves()
 
     async def on_startup(self):
-        print(f"[*] T2M Research Pipeline initialized. Root: {PROJECT_ROOT}")
+        print(f"[*] T2M Research Pipeline v2.0 initialized successfully.")
 
     async def on_shutdown(self):
         print("[*] T2M Research Pipeline shut down.")
@@ -38,56 +94,29 @@ class Pipeline:
     def pipe(
         self, user_message: str, model_id: str, messages: List[dict], body: dict
     ) -> Union[str, Generator, Iterator]:
-        """
-        Main execution flow triggered when chatting with the T2M Research Agent model in Open WebUI.
-        """
         query = user_message.strip() if user_message else "text-to-motion human motion"
-        
-        # 1. FETCH IEEE PAPERS PER SUB-AGENT DOMAIN
-        kinematic_papers = fetch_ieee_papers(query=f"{query} kinematics body model", max_results=5)
-        physics_papers = fetch_ieee_papers(query=f"{query} physics diffusion contact", max_results=5)
-        rl_papers = fetch_ieee_papers(query=f"{query} reinforcement learning character control", max_results=5)
-        pose_papers = fetch_ieee_papers(query=f"{query} 3d pose estimation smpl", max_results=5)
-        
-        all_papers = kinematic_papers + physics_papers + rl_papers + pose_papers
-        
-        # Deduplicate
-        seen = set()
-        unique_papers = []
-        for p in all_papers:
-            key = p.get('url') or p.get('title')
-            if key not in seen:
-                seen.add(key)
-                unique_papers.append(p)
 
-        # 2. DOWNLOAD PDFs (IEEE ONLY, EZproxy enabled)
-        download_count = download_pdfs(unique_papers, output_dir="articles")
-        
-        # 3. SUB-AGENT ANALYSIS
-        kinematic_res = analyze_kinematic(kinematic_papers)
-        physics_res = analyze_physics_diffusion(physics_papers)
-        rl_res = analyze_rl_control(rl_papers)
-        pose_res = analyze_pose_vision(pose_papers)
-        
-        # 4. ORCHESTRATOR SYNTHESIS
-        review = synthesize_literature_review(
-            kinematic_res,
-            physics_res,
-            rl_res,
-            pose_res
+        enable_ieee = True if self.valves.ENABLE_IEEE is None else self.valves.ENABLE_IEEE
+        enable_scholar = False if self.valves.ENABLE_SCHOLAR is None else self.valves.ENABLE_SCHOLAR
+        enable_arxiv = False if self.valves.ENABLE_ARXIV is None else self.valves.ENABLE_ARXIV
+        enable_semantic_scholar = False if self.valves.ENABLE_SEMANTIC_SCHOLAR is None else self.valves.ENABLE_SEMANTIC_SCHOLAR
+        max_results = 5 if not self.valves.MAX_RESULTS_PER_DOMAIN else self.valves.MAX_RESULTS_PER_DOMAIN
+        ezproxy_cookie = "" if not self.valves.EZPROXY_COOKIE else self.valves.EZPROXY_COOKIE
+        ezproxy_domain = "ezproxy.afeka.ac.il" if not self.valves.EZPROXY_DOMAIN else self.valves.EZPROXY_DOMAIN
+
+        return execute_t2m_research(
+            query=query,
+            enable_ieee=enable_ieee,
+            enable_scholar=enable_scholar,
+            enable_arxiv=enable_arxiv,
+            enable_semantic_scholar=enable_semantic_scholar,
+            max_results_per_domain=max_results,
+            ezproxy_cookie=ezproxy_cookie,
+            ezproxy_domain=ezproxy_domain,
+            kinematic_prompt=self.valves.KINEMATIC_PROMPT or KINEMATIC_SYSTEM_PROMPT,
+            physics_prompt=self.valves.PHYSICS_PROMPT or PHYSICS_DIFFUSION_SYSTEM_PROMPT,
+            rl_prompt=self.valves.RL_PROMPT or RL_CONTROL_SYSTEM_PROMPT,
+            pose_prompt=self.valves.POSE_PROMPT or MEDIAPIPE_POSE_SYSTEM_PROMPT,
+            orchestrator_prompt=self.valves.ORCHESTRATOR_PROMPT or ORCHESTRATOR_SYSTEM_PROMPT,
+            save_output_file=True
         )
-        
-        output = f"# 🎓 T2M IEEE Academic Research Report\n\n"
-        output += f"**Query:** `{query}` | **IEEE Unique Papers Processed:** {len(unique_papers)}\n"
-        output += f"**IEEE PDFs Secured:** {download_count} stored in `articles/`\n\n"
-        output += f"---\n\n"
-        output += f"## 🔍 Intermediate Sub-Agent Findings (IEEE Sources & Tables)\n\n"
-        output += f"### 1. Kinematic Models Sub-Agent\n{kinematic_res}\n\n"
-        output += f"### 2. Physics & Diffusion Sub-Agent\n{physics_res}\n\n"
-        output += f"### 3. RL Control Sub-Agent\n{rl_res}\n\n"
-        output += f"### 4. Pose & Vision Sub-Agent\n{pose_res}\n\n"
-        output += f"---\n\n"
-        output += f"# 🏛️ Master Literature Synthesis (Orchestrator)\n\n"
-        output += review
-        
-        return output

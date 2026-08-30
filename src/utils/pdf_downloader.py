@@ -1,6 +1,7 @@
 import os
 import re
 import time
+import requests
 from src.utils.logger import logger
 from src.utils.ezproxy_auth import get_authenticated_session
 
@@ -28,36 +29,46 @@ def download_pdfs(papers_list, output_dir="articles"):
             
         success = False
         
-        # Try downloading primary IEEE URL (with EZproxy session)
         if pdf_url:
-            logger.info(f"  [v] Downloading IEEE PDF [EZproxy / Direct]: {filename}...")
-            try:
-                response = session.get(pdf_url, stream=True, timeout=25, allow_redirects=True)
+            # Transform IEEE iframe URL to direct PDF binary endpoint
+            download_target_url = pdf_url
+            if "/stamp/stamp.jsp" in download_target_url:
+                download_target_url = download_target_url.replace("/stamp/stamp.jsp", "/stampPDF/getPDF.jsp")
                 
-                # Verify that response is actually a PDF (and not HTML login/error page)
+            logger.info(f"  [v] Downloading PDF [EZproxy / Direct]: {filename}...")
+            try:
+                response = session.get(download_target_url, stream=True, timeout=25, allow_redirects=True)
+                
                 content_type = response.headers.get('Content-Type', '').lower()
-                if response.status_code == 200 and ('pdf' in content_type or pdf_url.endswith('.pdf')):
+                
+                # Check first 4 bytes of stream for %PDF magic header
+                peek = response.content[:4] if hasattr(response, 'content') else b''
+                is_pdf_bytes = peek.startswith(b'%PDF')
+                
+                if response.status_code == 200 and ('pdf' in content_type or is_pdf_bytes or download_target_url.endswith('.pdf')):
                     with open(filepath, 'wb') as f:
-                        for chunk in response.iter_content(1024 * 16):
-                            f.write(chunk)
+                        if hasattr(response, 'content'):
+                            f.write(response.content)
+                        else:
+                            for chunk in response.iter_content(1024 * 16):
+                                f.write(chunk)
                     downloaded_count += 1
                     success = True
-                    time.sleep(2)
+                    logger.info(f"  [+] Saved PDF ({len(response.content) if hasattr(response, 'content') else 'N/A'} bytes) -> {filename}")
+                    time.sleep(1)
                 else:
-                    logger.warning(f"  [!] Direct link did not yield PDF (Content-Type: {content_type}, Status: {response.status_code}). Auth/cookies required.")
+                    logger.warning(f"  [!] Link did not yield binary PDF (Content-Type: {content_type}, Status: {response.status_code}).")
             except Exception as e:
-                logger.error(f"  [!] Exception fetching IEEE PDF for '{title[:30]}...': {e}")
+                logger.error(f"  [!] Exception fetching PDF for '{title[:30]}...': {e}")
 
         if not success:
-            logger.warning(f"  [~] Could not download IEEE PDF for: '{title[:40]}...'. (Requires valid EZproxy session)")
+            logger.warning(f"  [~] Could not download full PDF for: '{title[:40]}...'")
             failed_papers.append(title)
             
-    logger.info(f"\n[*] Successfully secured {downloaded_count} IEEE PDFs inside '{output_dir}/'.")
+    logger.info(f"\n[*] Successfully secured {downloaded_count} PDFs inside '{output_dir}/'.")
     if failed_papers:
-        logger.info("\n[*] The following IEEE papers could not be downloaded automatically (Login required):")
+        logger.info("\n[*] The following papers could not be downloaded automatically:")
         for fp in failed_papers:
             logger.info(f"    - {fp}")
-            
-    return downloaded_count
             
     return downloaded_count

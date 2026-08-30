@@ -1,5 +1,12 @@
 import os
+import sys
 import json
+
+# Add project root directory to sys.path so standalone script execution works smoothly
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 from playwright.sync_api import sync_playwright
 from src.utils.logger import logger
 from src.utils.ezproxy_auth import COOKIES_FILE_PATH

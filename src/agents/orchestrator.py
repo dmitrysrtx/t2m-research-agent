@@ -21,7 +21,7 @@ Include the following sections:
 Ensure the text is strictly academic, highly readable, and formatted in Markdown.
 """
 
-def synthesize_literature_review(kinematic_res, physics_diff_res, rl_res, pose_res):
+def synthesize_literature_review(kinematic_res, physics_diff_res, rl_res, pose_res, custom_prompt=None):
     """Passes all sub-agent outputs to the Orchestrator for final compilation."""
     
     prompt = f"""
@@ -44,4 +44,5 @@ Here are the analysis results from the 4 domain experts. Please synthesize them 
 {pose_res}
 ---
 """
-    return run_agent(ORCHESTRATOR_SYSTEM_PROMPT, prompt)
+    system_prompt = custom_prompt or ORCHESTRATOR_SYSTEM_PROMPT
+    return run_agent(system_prompt, prompt)

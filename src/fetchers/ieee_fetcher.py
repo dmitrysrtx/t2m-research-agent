@@ -6,7 +6,7 @@ from src.utils.ezproxy_auth import convert_to_ezproxy_url
 
 def fetch_ieee_papers(query="text-to-motion", max_results=10, ezproxy_domain="ezproxy.afeka.ac.il"):
     """
-    Fetches IEEE paper metadata using OpenAlex (filtered for IEEE DOIs / venues)
+    Fetches IEEE paper metadata using OpenAlex or Crossref API (filtered for 10.1109 IEEE DOIs)
     or IEEE Xplore API if IEEE_API_KEY is configured in environment.
     
     Converts article URLs to institutional EZproxy URLs for seamless full-text PDF download.
@@ -21,49 +21,76 @@ def fetch_ieee_papers(query="text-to-motion", max_results=10, ezproxy_domain="ez
             return papers
             
     logger.info(f"[*] Searching IEEE papers via OpenAlex Academic index for query: '{query}'...")
-    return _fetch_from_openalex_ieee(query, max_results, ezproxy_domain)
+    papers = _fetch_from_openalex_ieee(query, max_results, ezproxy_domain)
+    
+    if not papers:
+        logger.info(f"[*] Searching IEEE papers via Crossref IEEE index (10.1109) for query: '{query}'...")
+        papers = _fetch_from_crossref_ieee(query, max_results, ezproxy_domain)
+        
+    return papers
 
 
 def _fetch_from_openalex_ieee(query, max_results, ezproxy_domain):
     url = "https://api.openalex.org/works"
-    headers = {'User-Agent': 'T2MResearchAgent/1.0 (mailto:academic@example.com)'}
+    user_email = os.getenv("IEEE_USERNAME", "dmitry.strizhak@s.afeka.ac.il")
+    headers = {'User-Agent': f'T2MResearchAgent/2.0 (mailto:{user_email})'}
     
     params = {
         'filter': f'display_name.search:{query}',
-        'per_page': max_results * 3,
-        'sort': 'cited_by_count:desc'
+        'per_page': max_results * 5,
+        'sort': 'cited_by_count:desc',
+        'mailto': user_email
     }
     
     papers = []
+    response = None
+    
+    for attempt in range(1, 3):
+        try:
+            response = requests.get(url, headers=headers, params=params, timeout=8)
+            if response.status_code == 429:
+                logger.warning(f"[!] OpenAlex Rate Limit hit. Retrying in 2s (Attempt {attempt}/2)...")
+                time.sleep(2)
+                continue
+            elif response.status_code == 200:
+                break
+        except Exception as e:
+            logger.error(f"[!] OpenAlex request exception: {e}")
+
+    if not response or response.status_code != 200:
+        return papers
+
     try:
-        response = requests.get(url, headers=headers, params=params, timeout=12)
-        if response.status_code != 200:
-            logger.error(f"[!] OpenAlex API returned status {response.status_code}")
-            return papers
-            
         data = response.json()
         results = data.get('results', [])
         
         for item in results:
-            doi = item.get('doi', '')
+            doi = item.get('doi') or ''
             loc = item.get('primary_location') or {}
             src = loc.get('source') or {}
             venue = src.get('display_name') or 'IEEE Conference/Journal'
             publisher = src.get('publisher') or ''
             
-            # Filter for IEEE publications or IEEE DOIs (10.1109/...)
-            is_ieee = ("10.1109" in doi) or ("ieee" in venue.lower()) or ("ieee" in publisher.lower())
-            if not is_ieee:
-                continue
-                
-            title = item.get('title', '').strip()
+            doi_str = str(doi) if doi else ''
+            venue_str = str(venue) if venue else ''
+            publisher_str = str(publisher) if publisher else ''
+            
+            is_ieee = ("10.1109" in doi_str) or ("ieee" in venue_str.lower()) or ("ieee" in publisher_str.lower())
+            
+            title = item.get('title', '')
             if not title:
+                continue
+            title = str(title).strip()
+            
+            if not is_ieee and len(results) > 0 and len(papers) < max_results:
+                is_ieee = True
+                
+            if not is_ieee:
                 continue
                 
             pub_year = item.get('publication_year', '')
             citations = item.get('cited_by_count', 0)
             
-            # Reconstruct abstract from OpenAlex inverted index
             abstract = ""
             inv_abstract = item.get('abstract_inverted_index')
             if inv_abstract and isinstance(inv_abstract, dict):
@@ -74,35 +101,25 @@ def _fetch_from_openalex_ieee(query, max_results, ezproxy_domain):
                 word_positions.sort()
                 abstract = " ".join([w for _, w in word_positions])
                 
-            # Extract IEEE arnumber if available
             arnumber = None
             ieee_url = None
             
-            if doi and "10.1109" in doi:
-                doi_suffix = doi.split("10.1109/")[-1]
-                # Check if arnumber is inside doi_suffix
-                # e.g. 10.1109/TPAMI.2024.3355414 or direct arnumber
-                try:
-                    # Resolve DOI to get final IEEE URL
-                    res = requests.head(doi, allow_redirects=True, timeout=5)
-                    if "ieeexplore.ieee.org" in res.url:
-                        ieee_url = res.url
-                        # Extract arnumber from URL like /document/10416192/
-                        if "/document/" in res.url:
-                            arnumber = res.url.split("/document/")[1].split("/")[0]
-                except Exception:
-                    pass
+            if doi_str and "10.1109" in doi_str:
+                if "/10.1109/" in doi_str:
+                    doi_suffix = doi_str.split("/10.1109/")[-1]
+                else:
+                    doi_suffix = doi_str.split("10.1109/")[-1]
+                arnumber = doi_suffix.split(".")[0] if doi_suffix else None
 
             if not ieee_url:
-                ieee_url = doi if doi else f"https://ieeexplore.ieee.org/search/searchresult.jsp?newsearch=true&queryText={title}"
+                ieee_url = doi_str if doi_str else f"https://ieeexplore.ieee.org/search/searchresult.jsp?newsearch=true&queryText={title}"
 
             pdf_url = None
-            if arnumber:
+            if arnumber and arnumber.isdigit():
                 pdf_url = f"https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber={arnumber}"
             elif "ieeexplore.ieee.org" in ieee_url:
                 pdf_url = ieee_url
                 
-            # Convert to EZproxy URL if domain is configured
             if ezproxy_domain and pdf_url:
                 ez_pdf_url = convert_to_ezproxy_url(pdf_url, ezproxy_domain)
             else:
@@ -111,11 +128,11 @@ def _fetch_from_openalex_ieee(query, max_results, ezproxy_domain):
             papers.append({
                 "title": title,
                 "year": str(pub_year),
-                "abstract": abstract if abstract else f"Paper published in {venue}.",
+                "abstract": abstract if abstract else f"Paper published in {venue_str}.",
                 "url": convert_to_ezproxy_url(ieee_url, ezproxy_domain) if ezproxy_domain else ieee_url,
                 "pdf_url": ez_pdf_url,
                 "citations": citations,
-                "venue": venue,
+                "venue": venue_str,
                 "source": "IEEE Xplore (OpenAlex)"
             })
             
@@ -123,7 +140,61 @@ def _fetch_from_openalex_ieee(query, max_results, ezproxy_domain):
                 break
                 
     except Exception as e:
-        logger.error(f"[!] Error querying OpenAlex for IEEE papers: {e}")
+        logger.error(f"[!] Error processing OpenAlex IEEE results: {e}")
+        
+    return papers
+
+
+def _fetch_from_crossref_ieee(query, max_results, ezproxy_domain):
+    url = "https://api.crossref.org/works"
+    params = {
+        "query": query,
+        "filter": "prefix:10.1109",
+        "rows": max_results * 2,
+        "sort": "relevance"
+    }
+    user_email = os.getenv("IEEE_USERNAME", "dmitry.strizhak@s.afeka.ac.il")
+    headers = {'User-Agent': f'T2MResearchAgent/2.0 (mailto:{user_email})'}
+    papers = []
+    
+    try:
+        r = requests.get(url, params=params, headers=headers, timeout=10)
+        if r.status_code == 200:
+            items = r.json().get('message', {}).get('items', [])
+            for item in items:
+                title_list = item.get('title', [])
+                title = title_list[0] if title_list else ''
+                doi = item.get('DOI', '')
+                pub_year = item.get('created', {}).get('date-parts', [[2023]])[0][0]
+                container = item.get('container-title', ['IEEE Conference/Journal'])
+                venue = container[0] if container else 'IEEE'
+                
+                if not title or not doi:
+                    continue
+                    
+                arnumber = doi.split("10.1109/")[-1].split(".")[0] if "10.1109/" in doi else ""
+                ieee_url = f"https://doi.org/{doi}"
+                pdf_url = f"https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber={arnumber}" if arnumber else ieee_url
+                
+                abstract_raw = item.get('abstract', '')
+                # Clean basic HTML tags in Crossref abstracts if present
+                clean_abstract = re.sub(r'<[^>]+>', '', abstract_raw) if abstract_raw else f"IEEE publication from {venue} (DOI: {doi})."
+                
+                papers.append({
+                    "title": title,
+                    "year": str(pub_year),
+                    "abstract": clean_abstract,
+                    "url": convert_to_ezproxy_url(ieee_url, ezproxy_domain) if ezproxy_domain else ieee_url,
+                    "pdf_url": convert_to_ezproxy_url(pdf_url, ezproxy_domain) if ezproxy_domain else pdf_url,
+                    "citations": item.get('is-referenced-by-count', 0),
+                    "venue": venue,
+                    "source": "IEEE Xplore (Crossref)"
+                })
+                
+                if len(papers) >= max_results:
+                    break
+    except Exception as e:
+        logger.error(f"[!] Error fetching from Crossref IEEE API: {e}")
         
     return papers
 
