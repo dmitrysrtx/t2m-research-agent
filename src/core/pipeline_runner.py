@@ -165,9 +165,12 @@ def execute_t2m_research(
     logger.info(f"\n[*] Analytics: Fetched {len(all_papers_raw)} total hits across enabled fetchers.")
     logger.info(f"[*] Deduped: Found {len(unique_papers)} UNIQUE papers across all domains.")
 
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    articles_dir = os.path.join(project_root, "articles")
+
     # 2. DOWNLOAD PDFs
     logger.info("\n[2/4] Downloading UNIQUE PDFs for Deep RAG ingestion...")
-    download_count = download_pdfs(unique_papers, output_dir="articles")
+    download_count = download_pdfs(unique_papers, output_dir=articles_dir)
 
     # 3. SUB-AGENTS ANALYSIS
     logger.info("\n[3/4] Engaging AI Expert Sub-Agents...")
@@ -207,19 +210,24 @@ def execute_t2m_research(
     )
 
     if save_output_file:
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        output_path = os.path.join(project_root, "literature_review.md")
-        articles_dir = os.path.join(project_root, "articles")
-        os.makedirs(articles_dir, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        timestamped_path = os.path.join(articles_dir, f"literature_review_{timestamp}.md")
+        output_dir = os.path.join(project_root, "articles")
+        os.makedirs(output_dir, exist_ok=True)
+        try:
+            os.chmod(output_dir, 0o777)
+        except Exception:
+            pass
+
+        output_path = os.path.join(project_root, "LITERATURE_REVIEW.md")
         
         try:
             with open(output_path, "w", encoding="utf-8") as f:
                 f.write(summary_header)
-            with open(timestamped_path, "w", encoding="utf-8") as f:
-                f.write(summary_header)
-            logger.info(f"\n✅ Pipeline Complete! Review saved in: {output_path} and {timestamped_path}")
+            try:
+                os.chmod(output_path, 0o666)
+            except Exception:
+                pass
+
+            logger.info(f"\n✅ Pipeline Complete! Review saved in: {output_path}")
         except Exception as e:
             logger.error(f"[!] Failed to write review file: {e}")
 

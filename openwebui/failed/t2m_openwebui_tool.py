@@ -33,7 +33,8 @@ class Tools:
         if not unique_papers:
             return f"No IEEE papers found for query: '{query}'."
                 
-        downloaded = download_pdfs(unique_papers, output_dir="articles")
+        articles_dir = os.path.join(PROJECT_ROOT, "articles")
+        downloaded = download_pdfs(unique_papers, output_dir=articles_dir)
         
         report = f"### 📚 IEEE Search Results for '{query}'\n"
         report += f"**Found {len(unique_papers)} IEEE papers.** (Saved {downloaded} PDFs to `articles/`).\n\n"

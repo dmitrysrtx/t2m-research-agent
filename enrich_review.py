@@ -7,7 +7,8 @@ import requests
 import time
 from src.utils.logger import logger
 
-LITERATURE_REVIEW_PATH = "LITERATURE_REVIEW.md"
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+LITERATURE_REVIEW_PATH = os.path.join(PROJECT_ROOT, "LITERATURE_REVIEW.md")
 
 def extract_papers_from_markdown(file_path):
     if not os.path.exists(file_path):

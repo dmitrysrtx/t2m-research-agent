@@ -14,10 +14,10 @@ Includes multi-fetcher academic search across **Google Scholar**, **IEEE Xplore*
    - **ArXiv:** Pre-print paper discovery.
    - **Semantic Scholar:** Deep academic paper and citation graph indexing.
 
-2. **Automated Dual-File Saving:**
-   - Whether triggered via CLI (`main.py`) or OpenWebUI Pipeline (`t2m_pipeline.py`), the generated synthesis report is automatically duplicated and saved to:
-     - `literature_review.md` (root directory)
-     - `articles/literature_review_YYYYMMDD_HHMMSS.md` (timestamped archive)
+2. **Automated Output Management:**
+   - Whether triggered via CLI (`main.py`) or OpenWebUI Pipeline (`t2m_pipeline.py`), the generated synthesis report is saved to:
+     - `LITERATURE_REVIEW.md` (root directory)
+   - Downloaded full-text PDF articles are stored cleanly in `articles/*.pdf`.
 
 3. **Enhanced Paper Metadata & Comparative Tables:**
    Every processed paper extracts and synthesizes 3 crucial metadata dimensions:
@@ -100,11 +100,10 @@ python3 main.py
    - `ENABLE_SCHOLAR` (Toggle Google Scholar)
    - `ENABLE_IEEE` (Toggle IEEE Xplore)
    - `MAX_RESULTS_PER_DOMAIN` (Set results per sub-agent domain)
-4. Start a chat and receive full Markdown synthesis + automatic `literature_review.md` saved on host!
+4. Start a chat and receive full Markdown synthesis + automatic `LITERATURE_REVIEW.md` saved on host!
 
 ---
 
 ## 📊 Outputs & Artifacts
-- `literature_review.md`: Complete literature review report saved in root directory.
-- `articles/literature_review_YYYYMMDD_HHMMSS.md`: Timestamped archived copies of literature reviews.
+- `LITERATURE_REVIEW.md`: Complete literature review report saved in root directory.
 - `articles/*.pdf`: Directory containing downloaded full-text PDF files.

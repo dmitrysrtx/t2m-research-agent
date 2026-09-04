@@ -94,6 +94,19 @@ class Pipeline:
     def pipe(
         self, user_message: str, model_id: str, messages: List[dict], body: dict
     ) -> Union[str, Generator, Iterator]:
+        # 🔄 Dynamic module reload on each execution (Hot-Reloading without Docker restart)
+        try:
+            import importlib
+            import src.core.pipeline_runner
+            import src.agents.sub_agents
+            import src.agents.orchestrator
+
+            importlib.reload(src.agents.sub_agents)
+            importlib.reload(src.agents.orchestrator)
+            importlib.reload(src.core.pipeline_runner)
+        except Exception as e:
+            print(f"[!] Hot reload warning: {e}")
+
         query = user_message.strip() if user_message else "text-to-motion human motion"
 
         enable_ieee = True if self.valves.ENABLE_IEEE is None else self.valves.ENABLE_IEEE
