@@ -81,8 +81,32 @@ Edit `.env` in the root directory:
 OPENROUTER_API_KEY=sk-or-v1-YOUR_KEY_HERE
 API_BASE_URL=https://openrouter.ai/api/v1
 MODEL_NAME=anthropic/claude-3.5-sonnet
-EZPROXY_DOMAIN=ezproxy.afeka.ac.il
+IEEE_INSTITUTION=afeka
+IEEE_USERNAME=dmitry.strizhak@s.afeka.ac.il
+IEEE_PASSWORD=YOUR_PASSWORD_HERE
+EZPROXY_COOKIE=
 ```
+
+---
+
+## 🔐 Authentication & Token Guard
+
+The framework features an automated **Live Health-Check, Fail-Fast Token Guard, and Graceful Fallback**:
+
+1. **Preemptive Live Probe:**
+   Before querying academic search APIs or calling AI sub-agents, the pipeline executes a lightweight 1-second probe to IEEE Xplore.
+2. **In-Chat Mobile Push SSO (`/login`):**
+   If institutional cookies are missing or expired, the pipeline can automatically trigger Afeka College SSO authentication:
+   - Type `/login` in OpenWebUI (or submit a prompt with `AUTO_SSO_LOGIN=True`).
+   - A 2FA push notification is sent to your mobile phone.
+   - Simply approve with your fingerprint. The pipeline captures the session and proceeds with full PDF extraction.
+3. **Fail-Fast Token Preservation:**
+   If access is unauthenticated or push is not approved, execution halts immediately (**0 LLM tokens spent**) and returns actionable resolution instructions.
+4. **Standalone CLI Diagnostics:**
+   Test your current session entitlement directly in terminal:
+   ```bash
+   python3 -m src.utils.ezproxy_auth
+   ```
 
 ---
 
@@ -95,15 +119,20 @@ python3 main.py
 
 ### Option 2: Open WebUI Integration
 1. Open your **Open WebUI** dashboard.
-2. Go to **Admin Panel -> Pipelines**.
-3. Select `t2m_pipeline (pipe)` and configure **Valves**:
-   - `ENABLE_SCHOLAR` (Toggle Google Scholar)
-   - `ENABLE_IEEE` (Toggle IEEE Xplore)
-   - `MAX_RESULTS_PER_DOMAIN` (Set results per sub-agent domain)
-4. Start a chat and receive full Markdown synthesis + automatic `LITERATURE_REVIEW.md` saved on host!
+2. Select the `T2M Multi-Agent Academic Pipeline` model.
+3. Configure **Valves** (⚙️ settings icon):
+   - `ENABLE_IEEE` (Toggle IEEE Xplore searches)
+   - `ENABLE_ARXIV` (Toggle open preprints)
+   - `ENABLE_SCHOLAR` (Toggle Google Scholar indexing)
+   - `AUTO_SSO_LOGIN` (Auto-trigger mobile push 2FA on phone when cookies expire)
+   - `EZPROXY_COOKIE` (Optional raw cookie override)
+4. Use commands:
+   - Type `/login` to trigger mobile push authentication and refresh your session.
+   - Enter your research query to generate a complete multi-agent literature review!
 
 ---
 
 ## 📊 Outputs & Artifacts
 - `LITERATURE_REVIEW.md`: Complete literature review report saved in root directory.
 - `articles/*.pdf`: Directory containing downloaded full-text PDF files.
+

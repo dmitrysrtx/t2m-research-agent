@@ -13,21 +13,21 @@ def import_cookies_interactively():
     print("==================================================")
     print("🍪 EZproxy Cookie Importer (Headless Server Helper)")
     print("==================================================")
-    print("Так как сервер работат без графического экрана (Headless Linux),")
-    print("самый простой способ передать авторизацию — скопировать куки из браузера вашего ПК.\n")
-    print("📌 ИНСТРУКЦИЯ (занимает 15 секунд):")
-    print("1. Откройте в браузере на вашем ПК портал институциональной библиотеки:")
-    print("   https://ieeexplore-ieee-org.ezproxy.afeka.ac.il (или Technion/Kinneret)")
-    print("2. Откройте консоль разработчика (F12 ➔ Network) ИЛИ расширение Cookie-Editor.")
-    print("3. Вставьте содержимое ниже.\n")
-    print("Вам доступно 2 формата ввода:")
-    print(" - Формат 1: Заголовок Cookie ('ezproxyl=...; JSESSIONID=...; ...')")
-    print(" - Формат 2: Raw JSON экспортированный из Cookie-Editor\n")
+    print("Since this headless server runs without a graphical desktop,")
+    print("the easiest way to authorize access is copying cookies from your desktop browser.\n")
+    print("📌 INSTRUCTIONS (takes ~15 seconds):")
+    print("1. Open your institutional library portal on your PC browser:")
+    print("   https://ieeexplore-ieee-org.ezproxy.afeka.ac.il (or Technion/Kinneret)")
+    print("2. Open Developer Tools (F12 ➔ Network / Application) OR the Cookie-Editor extension.")
+    print("3. Paste the contents below.\n")
+    print("Supported input formats:")
+    print(" - Format 1: Cookie header string ('ezproxy=...; JSESSIONID=...; ...')")
+    print(" - Format 2: Raw JSON exported from Cookie-Editor\n")
     
-    user_input = input("👉 Вставьте куки и нажмите Enter:\n").strip()
+    user_input = input("👉 Paste cookies and press Enter:\n").strip()
     
     if not user_input:
-        print("❌ Ошибка: Ввод пуст.")
+        print("❌ Error: Empty input provided.")
         return
 
     parsed_cookies = {}
@@ -43,7 +43,7 @@ def import_cookies_interactively():
             elif isinstance(data, dict):
                 parsed_cookies = data
         except Exception as e:
-            logger.error(f"Не удалось распарсить JSON: {e}")
+            logger.error(f"Failed to parse JSON: {e}")
 
     # Fallback: parse as standard HTTP Cookie header string
     if not parsed_cookies:
@@ -55,15 +55,15 @@ def import_cookies_interactively():
                     parsed_cookies[k] = v
 
     if not parsed_cookies:
-        print("❌ Не удалось извлечь куки из введенной строки.")
+        print("❌ Could not extract cookies from the provided string.")
         return
 
     with open(COOKIES_FILE_PATH, "w", encoding="utf-8") as f:
         json.dump(parsed_cookies, f, indent=2)
 
-    print(f"\n✅ УСПЕХ! Сохранено {len(parsed_cookies)} куки в файл:")
+    print(f"\n✅ SUCCESS! Saved {len(parsed_cookies)} cookies to:")
     print(f"   {COOKIES_FILE_PATH}")
-    print("\nТеперь вы можете вызывать 'python3 main.py' — пайплайн будет скачивать полные IEEE PDF!")
+    print("\nYou can now run 'python3 main.py' — the pipeline will download full IEEE PDFs!")
 
 if __name__ == "__main__":
     import_cookies_interactively()

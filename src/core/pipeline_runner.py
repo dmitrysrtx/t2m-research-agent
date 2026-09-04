@@ -8,7 +8,12 @@ from src.fetchers.ieee_fetcher import fetch_ieee_papers
 from src.fetchers.arxiv_fetcher import fetch_arxiv_papers
 from src.fetchers.semantic_scholar_fetcher import fetch_semantic_scholar_papers
 from src.utils.pdf_downloader import download_pdfs
-from src.utils.ezproxy_auth import prompt_auth_instructions_if_needed, COOKIES_FILE_PATH, load_ezproxy_cookies
+from src.utils.ezproxy_auth import (
+    prompt_auth_instructions_if_needed,
+    COOKIES_FILE_PATH,
+    load_ezproxy_cookies,
+    verify_live_ieee_access,
+)
 from src.agents.sub_agents import (
     analyze_kinematic,
     analyze_physics_diffusion,
@@ -16,6 +21,41 @@ from src.agents.sub_agents import (
     analyze_pose_vision,
 )
 from src.agents.orchestrator import synthesize_literature_review
+
+
+def build_auth_required_message(reason: str, query: str = "") -> str:
+    """
+    Constructs a clear, end-user friendly Markdown message when institutional
+    authentication is missing or expired, preventing token wastage.
+    """
+    return (
+        "# 🛑 IEEE Xplore Institutional Access Required\n\n"
+        "The research pipeline was **halted early to preserve your LLM tokens**, "
+        "because fetching and synthesizing full-text peer-reviewed IEEE publications requires active institutional access.\n\n"
+        "### 🔍 Access Verification Details:\n"
+        f"- **Reason:** `{reason}`\n"
+        f"- **Research Query:** `{query[:120]}`\n"
+        "- **Session Status:** ❌ Session cookies are missing, invalid, or expired\n\n"
+        "---\n\n"
+        "### 💡 How to Proceed (Choose one option):\n\n"
+        "#### Option 1: Provide Session Cookie in OpenWebUI (Recommended - No Restart Needed)\n"
+        "1. Open your browser where you are logged into your institution / IEEE Xplore.\n"
+        "2. Copy your active `ezproxy` session cookie value (via `F12 ➔ Application ➔ Cookies` or the `Cookie-Editor` extension).\n"
+        "3. In OpenWebUI, open the pipeline settings (⚙️ **Valves**).\n"
+        "4. Paste the cookie into **`EZPROXY_COOKIE`** and save.\n"
+        "5. Resubmit your research prompt!\n\n"
+        "#### Option 2: Run Terminal SSO Authenticator\n"
+        "In your server terminal, execute:\n"
+        "```bash\n"
+        "python3 src/utils/sso_login.py\n"
+        "```\n"
+        "*(Enter your institutional credentials and approve the push notification on your phone)*.\n\n"
+        "#### Option 3: Research Open-Access Preprints (No Subscription Needed)\n"
+        "In pipeline settings (⚙️ **Valves**):\n"
+        "- Set **`ENABLE_IEEE = False`**\n"
+        "- Set **`ENABLE_ARXIV = True`**\n"
+        "The pipeline will immediately perform a full multi-agent review on open ArXiv preprints without requiring institutional login.\n"
+    )
 
 
 def extract_core_keywords(query: str) -> str:
@@ -61,6 +101,9 @@ def extract_core_keywords(query: str) -> str:
     return " ".join(clean_words[:5]) if clean_words else "text-to-motion human motion"
 
 
+from src.utils.sso_login import login_afeka_sso
+
+
 def execute_t2m_research(
     query: str = "text-to-motion human motion",
     enable_ieee: bool = True,
@@ -76,11 +119,15 @@ def execute_t2m_research(
     pose_prompt: str = None,
     orchestrator_prompt: str = None,
     save_output_file: bool = True,
+    auto_sso_login: bool = True,
+    status_callback: callable = None,
 ) -> str:
     """
     Central core execution engine for T2M Research Agent.
     Used by both CLI (main.py) and Open WebUI Pipeline (t2m_pipeline.py).
     Strictly adheres to active fetcher flags.
+    Supports automated mobile push SSO authentication and real-time status callbacks.
+    Enforces strict Fail-Fast token preservation if institutional access is required but unauthenticated.
     """
     clean_query = extract_core_keywords(query)
 
@@ -88,13 +135,55 @@ def execute_t2m_research(
     logger.info("🚀 Starting T2M Research Framework Engine")
     logger.info(f"[*] Raw Prompt Length: {len(query)} chars")
     logger.info(f"[*] Extracted Search Query: '{clean_query}'")
-    logger.info(f"[*] Active Fetchers -> IEEE: {enable_ieee} | ArXiv: {enable_arxiv} | Semantic Scholar: {enable_semantic_scholar}")
+    logger.info(f"[*] Active Fetchers -> IEEE: {enable_ieee} | ArXiv: {enable_arxiv} | Scholar: {enable_scholar} | Semantic Scholar: {enable_semantic_scholar}")
     logger.info("==================================================\n")
 
     if ezproxy_cookie.strip():
         os.environ["EZPROXY_COOKIE"] = ezproxy_cookie.strip()
         logger.info("[*] Using EZproxy cookie provided via Valves configuration.")
-    elif enable_ieee or enable_scholar or enable_semantic_scholar:
+
+    # 🛡️ LIVE HEALTH-CHECK & AUTOMATED SSO FALLBACK:
+    if enable_ieee:
+        logger.info("[*] Performing Live Health-Check on IEEE institutional access...")
+        if status_callback:
+            status_callback("🔍 Verifying IEEE institutional access...")
+
+        is_authed, reason = verify_live_ieee_access(cookie_override=ezproxy_cookie)
+
+        # If unauthenticated, attempt automated Mobile Push SSO login if credentials exist
+        if not is_authed and auto_sso_login:
+            has_user = bool(os.getenv("IEEE_USERNAME", "").strip())
+            has_pass = bool(os.getenv("IEEE_PASSWORD", "").strip())
+
+            if has_user and has_pass:
+                logger.info("[*] Access check failed. Initiating automatic Afeka SSO 2FA login...")
+                if status_callback:
+                    status_callback(f"⚠️ Access check: {reason}\n\n🔐 Initiating automatic Afeka SSO mobile push authentication...")
+
+                sso_ok, sso_msg = login_afeka_sso(
+                    status_callback=status_callback,
+                    interactive_fallback=False
+                )
+
+                if sso_ok:
+                    # Re-verify live access with newly acquired cookies
+                    is_authed, reason = verify_live_ieee_access()
+                    if is_authed:
+                        logger.info(f"✅ [HEALTH-CHECK RE-VERIFIED] {reason}")
+                        if status_callback:
+                            status_callback(f"✅ {reason}\n\n🚀 Resuming research pipeline...\n")
+                    else:
+                        logger.warning(f"🛑 [RE-VERIFY FAILED] {reason}")
+                else:
+                    logger.warning(f"🛑 [SSO FAILED] {sso_msg}")
+
+        if not is_authed:
+            logger.warning(f"🛑 [FAIL-FAST] IEEE Authentication check failed: {reason}")
+            logger.warning("🛑 Halting execution to preserve search quotas and LLM tokens.\n")
+            return build_auth_required_message(reason, query=query)
+
+        logger.info(f"✅ [HEALTH-CHECK OK] {reason}\n")
+    elif enable_scholar or enable_semantic_scholar:
         prompt_auth_instructions_if_needed()
 
     # Precise domain search terms (short queries first)

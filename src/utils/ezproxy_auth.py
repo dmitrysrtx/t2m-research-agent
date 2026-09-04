@@ -51,18 +51,21 @@ def convert_to_ezproxy_url(url: str, ezproxy_domain: str = None) -> str:
     return url
 
 
-def load_ezproxy_cookies(valves=None) -> dict:
+def load_ezproxy_cookies(valves=None, cookie_override: str = None) -> dict:
     """
     Loads EZproxy / IEEE authentication cookies from:
-    1. OpenWebUI Valves (EZPROXY_COOKIE override)
-    2. EZPROXY_COOKIE environment variable (.env)
-    3. ezproxy_cookies.json file in project root.
+    1. Direct parameter override (cookie_override)
+    2. OpenWebUI Valves (EZPROXY_COOKIE override)
+    3. EZPROXY_COOKIE environment variable (.env)
+    4. ezproxy_cookies.json file in project root.
     """
     cookies = {}
 
-    # Check Valves first
+    # Check parameter override or Valves
     env_cookie = None
-    if valves and hasattr(valves, "EZPROXY_COOKIE") and valves.EZPROXY_COOKIE.strip():
+    if cookie_override and cookie_override.strip():
+        env_cookie = cookie_override.strip()
+    elif valves and hasattr(valves, "EZPROXY_COOKIE") and valves.EZPROXY_COOKIE.strip():
         env_cookie = valves.EZPROXY_COOKIE.strip()
     else:
         env_cookie = os.getenv("EZPROXY_COOKIE")
@@ -115,11 +118,11 @@ def load_ezproxy_cookies(valves=None) -> dict:
     return cookies
 
 
-def check_auth_status(valves=None) -> dict:
+def check_auth_status(valves=None, cookie_override: str = None) -> dict:
     """
-    Checks if EZproxy authentication cookies exist.
+    Checks if EZproxy authentication cookies exist locally.
     """
-    cookies = load_ezproxy_cookies(valves)
+    cookies = load_ezproxy_cookies(valves, cookie_override=cookie_override)
     if not cookies:
         return {
             "authenticated": False,
@@ -131,6 +134,62 @@ def check_auth_status(valves=None) -> dict:
         "cookie_count": len(cookies),
         "message": f"Loaded {len(cookies)} EZproxy cookies"
     }
+
+
+def verify_live_ieee_access(session=None, valves=None, cookie_override: str = None, timeout: int = 6) -> tuple:
+    """
+    Performs a fast live probe (1-2s) to IEEE Xplore using the current authenticated session.
+    Checks whether full-text access is granted without downloading an entire file.
+    
+    Returns:
+        (True, "OK: Valid institutional access verified.") if access is confirmed.
+        (False, reason_description) if missing, expired, or blocked.
+    """
+    import requests
+    cookies = load_ezproxy_cookies(valves=valves, cookie_override=cookie_override)
+    if not cookies:
+        return False, "Session cookies not found (ezproxy_cookies.json is missing or empty)."
+
+    if session is None:
+        session = get_authenticated_session(valves=valves, cookie_override=cookie_override)
+
+    # Standard small IEEE paper PDF endpoint to test institutional entitlement
+    probe_url = "https://ieeexplore.ieee.org/stampPDF/getPDF.jsp?tp=&arnumber=6811462"
+    
+    try:
+        resp = session.get(probe_url, stream=True, timeout=timeout, allow_redirects=False)
+        
+        # 1. 301/302 Redirect to login page
+        if resp.status_code in (301, 302, 303, 307):
+            loc = resp.headers.get("Location", "")
+            if "login" in loc.lower() or "authdecision" in loc.lower() or "-203" in loc:
+                return False, "Session expired or unauthenticated (IEEE redirected to login authDecision=-203)."
+            return False, f"Redirected to authentication page: {loc[:60]}..."
+
+        # 2. 401 / 403 Forbidden
+        if resp.status_code in (401, 403):
+            return False, f"HTTP {resp.status_code}: Access denied by institutional firewall."
+
+        # 3. HTTP 200 OK -> Check if it's really binary PDF or an HTML login page
+        if resp.status_code == 200:
+            content_type = resp.headers.get("Content-Type", "").lower()
+            if "pdf" in content_type:
+                return True, "Full-text PDF access to IEEE Xplore confirmed."
+                
+            # Read first 128 bytes to check for %PDF magic bytes
+            chunk = next(resp.iter_content(128), b"")
+            if chunk.startswith(b"%PDF"):
+                return True, "Full-text PDF access to IEEE Xplore confirmed."
+                
+            if "html" in content_type or b"<html" in chunk.lower():
+                return False, "Received HTML login page instead of PDF binary stream."
+
+        return False, f"Unexpected response status from IEEE server: HTTP {resp.status_code}."
+        
+    except requests.exceptions.Timeout:
+        return False, "Request timed out while connecting to IEEE Xplore."
+    except requests.exceptions.RequestException as e:
+        return False, f"Network connection error to IEEE: {str(e)[:80]}."
 
 
 def prompt_auth_instructions_if_needed(valves=None):
@@ -145,7 +204,7 @@ def prompt_auth_instructions_if_needed(valves=None):
     logger.info("==================================================")
     
     if auth_status["authenticated"]:
-        logger.info(f"✅ Auth status: OK ({auth_status['cookie_count']} cookies loaded)\n")
+        logger.info(f"[*] Local cookies: {auth_status['cookie_count']} loaded.")
         return True
     
     banner = (
@@ -162,7 +221,7 @@ def prompt_auth_instructions_if_needed(valves=None):
     return False
 
 
-def get_authenticated_session(user_agent: str = None, valves=None):
+def get_authenticated_session(user_agent: str = None, valves=None, cookie_override: str = None):
     """
     Returns a requests.Session pre-configured with EZproxy cookies and proper browser headers.
     """
@@ -178,8 +237,24 @@ def get_authenticated_session(user_agent: str = None, valves=None):
     }
     session.headers.update(headers)
     
-    cookies = load_ezproxy_cookies(valves)
+    cookies = load_ezproxy_cookies(valves, cookie_override=cookie_override)
     for name, value in cookies.items():
         session.cookies.set(name, value)
         
     return session
+
+
+if __name__ == "__main__":
+    print("==================================================")
+    print("🔍 LIVE IEEE / EZPROXY AUTHENTICATION HEALTH-CHECK")
+    print("==================================================")
+    status = check_auth_status()
+    print(f"[*] Local cookies found: {status['cookie_count']}")
+    
+    print("[*] Probing IEEE Xplore live endpoint...")
+    is_valid, reason = verify_live_ieee_access()
+    if is_valid:
+        print(f"✅ SUCCESS: {reason}")
+    else:
+        print(f"❌ FAILED: {reason}")
+    print("==================================================")

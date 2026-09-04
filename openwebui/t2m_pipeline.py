@@ -34,14 +34,14 @@ class Pipeline:
     class Valves(BaseModel):
         ENABLE_IEEE: Optional[bool] = Field(
             default=True,
-            description="Enable paper searching via IEEE Xplore (EZproxy authentication required)"
+            description="Enable paper searching via IEEE Xplore (institutional authentication required)"
         )
         ENABLE_SCHOLAR: Optional[bool] = Field(
-            default=False,
+            default=True,
             description="Enable academic paper searching via Google Scholar Index"
         )
         ENABLE_ARXIV: Optional[bool] = Field(
-            default=False,
+            default=True,
             description="Enable open preprint searching via ArXiv API"
         )
         ENABLE_SEMANTIC_SCHOLAR: Optional[bool] = Field(
@@ -54,11 +54,15 @@ class Pipeline:
         )
         EZPROXY_COOKIE: Optional[str] = Field(
             default="",
-            description="Raw Cookie header string for EZproxy authentication (e.g., ezproxy=...; JSESSIONID=...)"
+            description="Institutional cookie (e.g. 'ezproxy=...' or Cookie-Editor JSON). Required for downloading IEEE PDFs. Leave empty to use ezproxy_cookies.json."
         )
         EZPROXY_DOMAIN: Optional[str] = Field(
             default="ezproxy.afeka.ac.il",
-            description="Institutional EZproxy domain name"
+            description="Institutional EZproxy domain name (e.g., ezproxy.afeka.ac.il)"
+        )
+        AUTO_SSO_LOGIN: Optional[bool] = Field(
+            default=True,
+            description="Automatically trigger mobile push 2FA on phone if IEEE session cookies expire"
         )
         KINEMATIC_PROMPT: Optional[str] = Field(
             default=KINEMATIC_SYSTEM_PROMPT,
@@ -97,17 +101,59 @@ class Pipeline:
         # 🔄 Dynamic module reload on each execution (Hot-Reloading without Docker restart)
         try:
             import importlib
+            import src.utils.ezproxy_auth
+            import src.utils.sso_login
             import src.core.pipeline_runner
             import src.agents.sub_agents
             import src.agents.orchestrator
 
+            importlib.reload(src.utils.ezproxy_auth)
+            importlib.reload(src.utils.sso_login)
             importlib.reload(src.agents.sub_agents)
             importlib.reload(src.agents.orchestrator)
             importlib.reload(src.core.pipeline_runner)
         except Exception as e:
             print(f"[!] Hot reload warning: {e}")
 
+        import queue
+        import threading
+
         query = user_message.strip() if user_message else "text-to-motion human motion"
+
+        # Explicit /login command handling
+        if query.lower() in ["/login", "login", "/auth", "auth"]:
+            yield "🔐 **Initiating Afeka SSO Authentication...**\n\n"
+            msg_queue = queue.Queue()
+
+            def cb(m: str):
+                msg_queue.put(m)
+
+            def auth_worker():
+                import src.utils.sso_login
+                ok, msg = src.utils.sso_login.login_afeka_sso(
+                    status_callback=cb,
+                    interactive_fallback=False
+                )
+                msg_queue.put(("DONE", ok, msg))
+
+            t = threading.Thread(target=auth_worker)
+            t.start()
+
+            while t.is_alive() or not msg_queue.empty():
+                try:
+                    item = msg_queue.get(timeout=0.5)
+                    if isinstance(item, tuple) and item[0] == "DONE":
+                        ok, msg = item[1], item[2]
+                        if ok:
+                            yield f"\n\n---\n\n🎉 **Login Successful!** {msg}\nInstitutional access is now active. You can now submit your research questions."
+                        else:
+                            yield f"\n\n---\n\n❌ **Login Failed:** {msg}"
+                        return
+                    else:
+                        yield f"{item}\n"
+                except queue.Empty:
+                    continue
+            return
 
         enable_ieee = True if self.valves.ENABLE_IEEE is None else self.valves.ENABLE_IEEE
         enable_scholar = False if self.valves.ENABLE_SCHOLAR is None else self.valves.ENABLE_SCHOLAR
@@ -116,20 +162,51 @@ class Pipeline:
         max_results = 5 if not self.valves.MAX_RESULTS_PER_DOMAIN else self.valves.MAX_RESULTS_PER_DOMAIN
         ezproxy_cookie = "" if not self.valves.EZPROXY_COOKIE else self.valves.EZPROXY_COOKIE
         ezproxy_domain = "ezproxy.afeka.ac.il" if not self.valves.EZPROXY_DOMAIN else self.valves.EZPROXY_DOMAIN
+        auto_sso = True if self.valves.AUTO_SSO_LOGIN is None else self.valves.AUTO_SSO_LOGIN
 
-        return execute_t2m_research(
-            query=query,
-            enable_ieee=enable_ieee,
-            enable_scholar=enable_scholar,
-            enable_arxiv=enable_arxiv,
-            enable_semantic_scholar=enable_semantic_scholar,
-            max_results_per_domain=max_results,
-            ezproxy_cookie=ezproxy_cookie,
-            ezproxy_domain=ezproxy_domain,
-            kinematic_prompt=self.valves.KINEMATIC_PROMPT or KINEMATIC_SYSTEM_PROMPT,
-            physics_prompt=self.valves.PHYSICS_PROMPT or PHYSICS_DIFFUSION_SYSTEM_PROMPT,
-            rl_prompt=self.valves.RL_PROMPT or RL_CONTROL_SYSTEM_PROMPT,
-            pose_prompt=self.valves.POSE_PROMPT or MEDIAPIPE_POSE_SYSTEM_PROMPT,
-            orchestrator_prompt=self.valves.ORCHESTRATOR_PROMPT or ORCHESTRATOR_SYSTEM_PROMPT,
-            save_output_file=True
-        )
+        msg_queue = queue.Queue()
+
+        def cb(m: str):
+            msg_queue.put(m)
+
+        def runner_worker():
+            try:
+                res = src.core.pipeline_runner.execute_t2m_research(
+                    query=query,
+                    enable_ieee=enable_ieee,
+                    enable_scholar=enable_scholar,
+                    enable_arxiv=enable_arxiv,
+                    enable_semantic_scholar=enable_semantic_scholar,
+                    max_results_per_domain=max_results,
+                    ezproxy_cookie=ezproxy_cookie,
+                    ezproxy_domain=ezproxy_domain,
+                    kinematic_prompt=self.valves.KINEMATIC_PROMPT or KINEMATIC_SYSTEM_PROMPT,
+                    physics_prompt=self.valves.PHYSICS_PROMPT or PHYSICS_DIFFUSION_SYSTEM_PROMPT,
+                    rl_prompt=self.valves.RL_PROMPT or RL_CONTROL_SYSTEM_PROMPT,
+                    pose_prompt=self.valves.POSE_PROMPT or MEDIAPIPE_POSE_SYSTEM_PROMPT,
+                    orchestrator_prompt=self.valves.ORCHESTRATOR_PROMPT or ORCHESTRATOR_SYSTEM_PROMPT,
+                    save_output_file=True,
+                    auto_sso_login=auto_sso,
+                    status_callback=cb,
+                )
+                msg_queue.put(("RESULT", res))
+            except Exception as e:
+                msg_queue.put(("ERROR", str(e)))
+
+        t = threading.Thread(target=runner_worker)
+        t.start()
+
+        while t.is_alive() or not msg_queue.empty():
+            try:
+                item = msg_queue.get(timeout=0.5)
+                if isinstance(item, tuple):
+                    if item[0] == "RESULT":
+                        yield f"\n\n{item[1]}"
+                        return
+                    elif item[0] == "ERROR":
+                        yield f"\n\n❌ **Execution Error:** {item[1]}\n"
+                        return
+                else:
+                    yield f"{item}\n"
+            except queue.Empty:
+                continue
