@@ -57,7 +57,10 @@ def download_pdfs(papers_list, output_dir="articles"):
                     logger.info(f"  [+] Saved PDF ({len(response.content) if hasattr(response, 'content') else 'N/A'} bytes) -> {filename}")
                     time.sleep(1)
                 else:
-                    logger.warning(f"  [!] Link did not yield binary PDF (Content-Type: {content_type}, Status: {response.status_code}).")
+                    if 'html' in content_type or response.status_code in [401, 403]:
+                        logger.warning(f"  [!] Received HTML login page / Auth wall (Status: {response.status_code}, Content-Type: {content_type}). Valid SSO session cookies required!")
+                    else:
+                        logger.warning(f"  [!] Link did not yield binary PDF (Content-Type: {content_type}, Status: {response.status_code}).")
             except Exception as e:
                 logger.error(f"  [!] Exception fetching PDF for '{title[:30]}...': {e}")
 
@@ -70,5 +73,19 @@ def download_pdfs(papers_list, output_dir="articles"):
         logger.info("\n[*] The following papers could not be downloaded automatically:")
         for fp in failed_papers:
             logger.info(f"    - {fp}")
+            
+    if downloaded_count == 0 and failed_papers:
+        logger.error(
+            "\n⛔ ZERO PDFs DOWNLOADED! (AUTHENTICATION REQUIRED)\n"
+            "--------------------------------------------------------------------------------\n"
+            "All paper targets failed or returned login HTML pages because active session\n"
+            "cookies were missing or expired.\n\n"
+            "👉 HOW TO FIX THIS ON HEADLESS UBUNTU SERVER:\n"
+            "   1. Run the pure-Python SSO authentication script:\n"
+            "      python3 src/utils/sso_login.py\n"
+            "   2. Approve the 2FA Push notification sent to your mobile phone.\n"
+            "   3. Re-run your research query!\n"
+            "--------------------------------------------------------------------------------\n"
+        )
             
     return downloaded_count

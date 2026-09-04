@@ -11,20 +11,26 @@ from playwright.sync_api import sync_playwright
 from src.utils.logger import logger
 from src.utils.ezproxy_auth import COOKIES_FILE_PATH
 
-def generate_ezproxy_session(target_url="https://ieeexplore-ieee-org.ezproxy.afeka.ac.il", headless=False):
+def generate_ezproxy_session(target_url="https://ieeexplore-ieee-org.ezproxy.afeka.ac.il", headless=None):
     """
     Launches a Playwright browser session for institutional authentication (Afeka EZproxy).
     Exports cookies to 'ezproxy_cookies.json' in the project root.
+    Auto-detects headless mode on headless servers (missing X11 DISPLAY).
     """
+    if headless is None:
+        headless = not bool(os.getenv("DISPLAY"))
+
     logger.info("==================================================")
     logger.info("🔐 Playwright EZproxy Session Manager")
     logger.info("==================================================")
-    logger.info(f"[*] Opening browser to target: {target_url}")
-    logger.info("[*] Please complete the login/2FA in the browser window if prompted.")
+    logger.info(f"[*] Opening browser to target: {target_url} (Headless: {headless})")
     
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=headless, args=['--no-sandbox', '--disable-setuid-sandbox'])
+            browser = p.chromium.launch(
+                headless=headless,
+                args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+            )
             context = browser.new_context()
             page = context.new_page()
             

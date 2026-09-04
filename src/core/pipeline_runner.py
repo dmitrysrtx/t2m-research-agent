@@ -94,7 +94,7 @@ def execute_t2m_research(
     if ezproxy_cookie.strip():
         os.environ["EZPROXY_COOKIE"] = ezproxy_cookie.strip()
         logger.info("[*] Using EZproxy cookie provided via Valves configuration.")
-    elif enable_ieee:
+    elif enable_ieee or enable_scholar or enable_semantic_scholar:
         prompt_auth_instructions_if_needed()
 
     # Precise domain search terms (short queries first)
@@ -211,24 +211,31 @@ def execute_t2m_research(
 
     if save_output_file:
         output_dir = os.path.join(project_root, "articles")
+        timestamped_path = os.path.join(output_dir, f"literature_review_{int(time.time())}.md")
+        output_path = os.path.join(project_root, "LITERATURE_REVIEW.md")
+        
+        # Get UID/GID of host project folder
+        try:
+            st = os.stat(project_root)
+            host_uid, host_gid = st.st_uid, st.st_gid
+        except Exception:
+            host_uid, host_gid = 1000, 1000
+
         os.makedirs(output_dir, exist_ok=True)
         try:
+            os.chown(output_dir, host_uid, host_gid)
             os.chmod(output_dir, 0o777)
         except Exception:
             pass
 
-        output_path = os.path.join(project_root, "LITERATURE_REVIEW.md")
-        
-        try:
-            with open(output_path, "w", encoding="utf-8") as f:
-                f.write(summary_header)
+        for p in [output_path, timestamped_path]:
             try:
-                os.chmod(output_path, 0o666)
-            except Exception:
-                pass
-
-            logger.info(f"\n✅ Pipeline Complete! Review saved in: {output_path}")
-        except Exception as e:
-            logger.error(f"[!] Failed to write review file: {e}")
+                with open(p, "w", encoding="utf-8") as f:
+                    f.write(summary_header)
+                os.chown(p, host_uid, host_gid)
+                os.chmod(p, 0o666)
+                logger.info(f"✅ Review file saved with host owner ({host_uid}:{host_gid}): {p}")
+            except Exception as e:
+                logger.error(f"[!] Failed to write review file {p}: {e}")
 
     return summary_header
