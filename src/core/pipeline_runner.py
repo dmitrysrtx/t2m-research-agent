@@ -2,6 +2,7 @@ import os
 import sys
 import re
 import time
+from datetime import datetime
 from src.utils.logger import logger
 from src.fetchers.ieee_fetcher import fetch_ieee_papers
 from src.fetchers.arxiv_fetcher import fetch_arxiv_papers
