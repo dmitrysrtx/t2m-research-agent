@@ -29,27 +29,28 @@ from src.agents.sub_agents import (
     MEDIAPIPE_POSE_SYSTEM_PROMPT
 )
 from src.agents.orchestrator import ORCHESTRATOR_SYSTEM_PROMPT
+import agent_config as config
 
 class Pipeline:
     class Valves(BaseModel):
         ENABLE_IEEE: Optional[bool] = Field(
-            default=True,
+            default=config.ENABLE_IEEE_DEFAULT,
             description="Enable paper searching via IEEE Xplore (institutional authentication required)"
         )
         ENABLE_SCHOLAR: Optional[bool] = Field(
-            default=True,
+            default=config.ENABLE_SCHOLAR_DEFAULT,
             description="Enable academic paper searching via Google Scholar Index"
         )
         ENABLE_ARXIV: Optional[bool] = Field(
-            default=True,
+            default=config.ENABLE_ARXIV_DEFAULT,
             description="Enable open preprint searching via ArXiv API"
         )
         ENABLE_SEMANTIC_SCHOLAR: Optional[bool] = Field(
-            default=False,
+            default=config.ENABLE_SEMANTIC_SCHOLAR_DEFAULT,
             description="Enable academic paper searching via Semantic Scholar API"
         )
         MAX_RESULTS_PER_DOMAIN: Optional[int] = Field(
-            default=5,
+            default=config.MAX_RESULTS_PER_DOMAIN,
             description="Maximum paper results to retrieve per sub-agent domain"
         )
         EZPROXY_COOKIE: Optional[str] = Field(
@@ -57,11 +58,11 @@ class Pipeline:
             description="Institutional cookie (e.g. 'ezproxy=...' or Cookie-Editor JSON). Required for downloading IEEE PDFs. Leave empty to use ezproxy_cookies.json."
         )
         EZPROXY_DOMAIN: Optional[str] = Field(
-            default="ezproxy.afeka.ac.il",
+            default=config.EZPROXY_DOMAIN_DEFAULT,
             description="Institutional EZproxy domain name (e.g., ezproxy.afeka.ac.il)"
         )
         AUTO_SSO_LOGIN: Optional[bool] = Field(
-            default=True,
+            default=config.AUTO_SSO_LOGIN_DEFAULT,
             description="Automatically trigger mobile push 2FA on phone if IEEE session cookies expire"
         )
         KINEMATIC_PROMPT: Optional[str] = Field(
@@ -101,14 +102,22 @@ class Pipeline:
         # 🔄 Dynamic module reload on each execution (Hot-Reloading without Docker restart)
         try:
             import importlib
-            import src.utils.ezproxy_auth
-            import src.utils.sso_login
+            import config
+            import src.auth.ezproxy_auth
+            import src.auth.ezproxy_session
+            import src.auth.afeka_sso
+            import src.auth.sso_login
+            import src.fetchers.citation_enricher
             import src.core.pipeline_runner
             import src.agents.sub_agents
             import src.agents.orchestrator
 
-            importlib.reload(src.utils.ezproxy_auth)
-            importlib.reload(src.utils.sso_login)
+            importlib.reload(config)
+            importlib.reload(src.auth.ezproxy_auth)
+            importlib.reload(src.auth.ezproxy_session)
+            importlib.reload(src.auth.afeka_sso)
+            importlib.reload(src.auth.sso_login)
+            importlib.reload(src.fetchers.citation_enricher)
             importlib.reload(src.agents.sub_agents)
             importlib.reload(src.agents.orchestrator)
             importlib.reload(src.core.pipeline_runner)
@@ -118,7 +127,7 @@ class Pipeline:
         import queue
         import threading
 
-        query = user_message.strip() if user_message else "text-to-motion human motion"
+        query = user_message.strip() if user_message else config.DEFAULT_SEARCH_QUERY
 
         # Explicit /login command handling
         if query.lower() in ["/login", "login", "/auth", "auth"]:
@@ -129,8 +138,8 @@ class Pipeline:
                 msg_queue.put(m)
 
             def auth_worker():
-                import src.utils.sso_login
-                ok, msg = src.utils.sso_login.login_afeka_sso(
+                import src.auth.sso_login
+                ok, msg = src.auth.sso_login.login_afeka_sso(
                     status_callback=cb,
                     interactive_fallback=False
                 )
@@ -155,14 +164,14 @@ class Pipeline:
                     continue
             return
 
-        enable_ieee = True if self.valves.ENABLE_IEEE is None else self.valves.ENABLE_IEEE
-        enable_scholar = False if self.valves.ENABLE_SCHOLAR is None else self.valves.ENABLE_SCHOLAR
-        enable_arxiv = False if self.valves.ENABLE_ARXIV is None else self.valves.ENABLE_ARXIV
-        enable_semantic_scholar = False if self.valves.ENABLE_SEMANTIC_SCHOLAR is None else self.valves.ENABLE_SEMANTIC_SCHOLAR
-        max_results = 5 if not self.valves.MAX_RESULTS_PER_DOMAIN else self.valves.MAX_RESULTS_PER_DOMAIN
+        enable_ieee = config.ENABLE_IEEE_DEFAULT if self.valves.ENABLE_IEEE is None else self.valves.ENABLE_IEEE
+        enable_scholar = config.ENABLE_SCHOLAR_DEFAULT if self.valves.ENABLE_SCHOLAR is None else self.valves.ENABLE_SCHOLAR
+        enable_arxiv = config.ENABLE_ARXIV_DEFAULT if self.valves.ENABLE_ARXIV is None else self.valves.ENABLE_ARXIV
+        enable_semantic_scholar = config.ENABLE_SEMANTIC_SCHOLAR_DEFAULT if self.valves.ENABLE_SEMANTIC_SCHOLAR is None else self.valves.ENABLE_SEMANTIC_SCHOLAR
+        max_results = config.MAX_RESULTS_PER_DOMAIN if not self.valves.MAX_RESULTS_PER_DOMAIN else self.valves.MAX_RESULTS_PER_DOMAIN
         ezproxy_cookie = "" if not self.valves.EZPROXY_COOKIE else self.valves.EZPROXY_COOKIE
-        ezproxy_domain = "ezproxy.afeka.ac.il" if not self.valves.EZPROXY_DOMAIN else self.valves.EZPROXY_DOMAIN
-        auto_sso = True if self.valves.AUTO_SSO_LOGIN is None else self.valves.AUTO_SSO_LOGIN
+        ezproxy_domain = config.EZPROXY_DOMAIN_DEFAULT if not self.valves.EZPROXY_DOMAIN else self.valves.EZPROXY_DOMAIN
+        auto_sso = config.AUTO_SSO_LOGIN_DEFAULT if self.valves.AUTO_SSO_LOGIN is None else self.valves.AUTO_SSO_LOGIN
 
         msg_queue = queue.Queue()
 

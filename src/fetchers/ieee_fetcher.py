@@ -1,10 +1,11 @@
 import os
 import requests
 import time
+import agent_config as config
 from src.utils.logger import logger
-from src.utils.ezproxy_auth import convert_to_ezproxy_url
+from src.auth.ezproxy_auth import convert_to_ezproxy_url
 
-def fetch_ieee_papers(query="text-to-motion", max_results=10, ezproxy_domain="ezproxy.afeka.ac.il"):
+def fetch_ieee_papers(query=config.DEFAULT_SEARCH_QUERY, max_results=config.MAX_RESULTS_PER_DOMAIN, ezproxy_domain=config.EZPROXY_DOMAIN_DEFAULT):
     """
     Fetches IEEE paper metadata using OpenAlex or Crossref API (filtered for 10.1109 IEEE DOIs)
     or IEEE Xplore API if IEEE_API_KEY is configured in environment.
@@ -82,9 +83,6 @@ def _fetch_from_openalex_ieee(query, max_results, ezproxy_domain):
                 continue
             title = str(title).strip()
             
-            if not is_ieee and len(results) > 0 and len(papers) < max_results:
-                is_ieee = True
-                
             if not is_ieee:
                 continue
                 
@@ -101,25 +99,28 @@ def _fetch_from_openalex_ieee(query, max_results, ezproxy_domain):
                 word_positions.sort()
                 abstract = " ".join([w for _, w in word_positions])
                 
-            arnumber = None
-            ieee_url = None
-            
-            if doi_str and "10.1109" in doi_str:
-                if "/10.1109/" in doi_str:
-                    doi_suffix = doi_str.split("/10.1109/")[-1]
+            # 1. Check locations for direct PDF URL
+            pdf_url = loc.get('pdf_url')
+            if not pdf_url:
+                best_oa = item.get('best_oa_location') or {}
+                pdf_url = best_oa.get('pdf_url')
+            if not pdf_url:
+                for location in item.get('locations', []):
+                    if location.get('pdf_url'):
+                        pdf_url = location.get('pdf_url')
+                        break
+
+            # 2. Extract article number from landing URL or DOI if available
+            landing_url = loc.get('landing_page_url') or doi_str
+            ieee_url = landing_url if landing_url else (doi_str if doi_str else f"https://ieeexplore.ieee.org/search/searchresult.jsp?newsearch=true&queryText={title}")
+
+            if not pdf_url and "10.1109" in doi_str:
+                m = re.search(r'arnumber=(\d+)', landing_url) or re.search(r'/document/(\d+)', landing_url) or re.search(r'(\d{7,8})', doi_str)
+                if m:
+                    pdf_url = f"https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber={m.group(1)}"
                 else:
-                    doi_suffix = doi_str.split("10.1109/")[-1]
-                arnumber = doi_suffix.split(".")[0] if doi_suffix else None
+                    pdf_url = doi_str if doi_str.startswith("http") else f"https://doi.org/{doi_str}"
 
-            if not ieee_url:
-                ieee_url = doi_str if doi_str else f"https://ieeexplore.ieee.org/search/searchresult.jsp?newsearch=true&queryText={title}"
-
-            pdf_url = None
-            if arnumber and arnumber.isdigit():
-                pdf_url = f"https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber={arnumber}"
-            elif "ieeexplore.ieee.org" in ieee_url:
-                pdf_url = ieee_url
-                
             if ezproxy_domain and pdf_url:
                 ez_pdf_url = convert_to_ezproxy_url(pdf_url, ezproxy_domain)
             else:
@@ -235,3 +236,7 @@ def _fetch_from_ieee_api(query, api_key, max_results, ezproxy_domain):
         logger.error(f"[!] Error fetching from IEEE REST API: {e}")
         
     return papers
+
+if __name__ == "__main__":
+    results = fetch_ieee_papers("text-to-motion", max_results=2)
+    print(f"[*] Fetched {len(results)} IEEE test papers.")

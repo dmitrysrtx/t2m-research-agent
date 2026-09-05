@@ -1,32 +1,24 @@
 from openai import OpenAI
 import os
 import sys
-import importlib.util
-
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
-config_file_path = os.path.join(ROOT_DIR, "config.py")
-if os.path.exists(config_file_path):
-    spec = importlib.util.spec_from_file_location("t2m_agent_config", config_file_path)
-    config = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(config)
-else:
-    import config
+from agent_config import API_KEY, BASE_URL, MODEL_NAME
 
 client = OpenAI(
-    base_url=config.BASE_URL,
-    api_key=config.API_KEY,
+    base_url=BASE_URL,
+    api_key=API_KEY,
 )
 
 def run_agent(system_prompt, user_prompt):
-    if not config.API_KEY or config.API_KEY == "your_api_key_here":
+    if not API_KEY or API_KEY == "your_api_key_here":
         return "[!] API Key is missing. Please configure the .env file."
         
     try:
         response = client.chat.completions.create(
-            model=config.MODEL_NAME,
+            model=MODEL_NAME,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
@@ -109,3 +101,13 @@ def analyze_pose_vision(papers_data, custom_prompt=None):
     if not papers_data: return "No Pose/Vision papers found."
     prompt = custom_prompt or MEDIAPIPE_POSE_SYSTEM_PROMPT
     return run_agent(prompt, format_papers_for_prompt(papers_data))
+
+
+if __name__ == "__main__":
+    print("==================================================")
+    print("🤖 Sub-Agents Standalone Health Check")
+    print("==================================================")
+    print(f"[*] Configured LLM Model: {MODEL_NAME}")
+    print(f"[*] Base URL: {BASE_URL}")
+    print(f"[*] API Key set: {'Yes' if API_KEY else 'No'}")
+    print("==================================================")

@@ -2,9 +2,12 @@ import logging
 import os
 import sys
 
-def setup_logger(log_file="research_agent.log"):
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+DEFAULT_LOG_PATH = os.path.join(PROJECT_ROOT, "research_agent.log")
+
+def setup_logger(log_file=DEFAULT_LOG_PATH):
     """
-    Sets up a logger that outputs to both the console and a file.
+    Sets up a logger that outputs to both the console and a file in project root.
     """
     logger = logging.getLogger("T2MAgent")
     

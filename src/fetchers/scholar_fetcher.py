@@ -1,13 +1,14 @@
 import time
 import requests
 from typing import List, Dict, Any
+import agent_config as config
 from src.utils.logger import logger
-from src.utils.ezproxy_auth import convert_to_ezproxy_url
+from src.auth.ezproxy_auth import convert_to_ezproxy_url
 
 def fetch_google_scholar_papers(
-    query: str = "text-to-motion",
-    max_results: int = 5,
-    ezproxy_domain: str = "ezproxy.afeka.ac.il"
+    query: str = config.DEFAULT_SEARCH_QUERY,
+    max_results: int = config.MAX_RESULTS_PER_DOMAIN,
+    ezproxy_domain: str = config.EZPROXY_DOMAIN_DEFAULT
 ) -> List[Dict[str, Any]]:
     """
     Fetches academic papers indexed by Google Scholar using high-reliability
@@ -154,3 +155,8 @@ def fetch_google_scholar_papers(
             
     logger.info(f"[*] Google Scholar Fetcher returned {len(papers)} papers.")
     return papers[:max_results]
+
+if __name__ == "__main__":
+    results = fetch_google_scholar_papers("text-to-motion", max_results=2)
+    print(f"[*] Fetched {len(results)} Scholar test papers.")
+

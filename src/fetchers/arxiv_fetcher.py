@@ -1,9 +1,10 @@
 import urllib.request
 import urllib.parse
 import xml.etree.ElementTree as ET
+import agent_config as config
 from src.utils.logger import logger
 
-def fetch_arxiv_papers(query="text-to-motion", max_results=5):
+def fetch_arxiv_papers(query=config.DEFAULT_SEARCH_QUERY, max_results=config.MAX_RESULTS_PER_DOMAIN):
     """
     Fetches paper metadata from the ArXiv API, sorted by relevance to find high-impact core papers.
     """
@@ -36,3 +37,9 @@ def fetch_arxiv_papers(query="text-to-motion", max_results=5):
         logger.error(f"[!] Error fetching from ArXiv: {e}")
         
     return papers
+
+
+if __name__ == "__main__":
+    results = fetch_arxiv_papers(max_results=2)
+    print(f"[*] Fetched {len(results)} ArXiv test papers.")
+

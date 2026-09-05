@@ -1,8 +1,9 @@
 import requests
 import time
+import agent_config as config
 from src.utils.logger import logger
 
-def fetch_semantic_scholar_papers(query="text-to-motion", max_results=10, min_citations=2):
+def fetch_semantic_scholar_papers(query=config.DEFAULT_SEARCH_QUERY, max_results=config.MAX_RESULTS_PER_DOMAIN, min_citations=2):
     """
     Fetches paper metadata from the Semantic Scholar API.
     Includes retry logic for HTTP 429 (Too Many Requests).
@@ -82,3 +83,8 @@ def fetch_semantic_scholar_papers(query="text-to-motion", max_results=10, min_ci
         logger.error(f"[!] Error parsing Semantic Scholar JSON: {e}")
         
     return papers
+
+
+if __name__ == "__main__":
+    results = fetch_semantic_scholar_papers(max_results=2)
+    print(f"[*] Fetched {len(results)} Semantic Scholar test papers.")

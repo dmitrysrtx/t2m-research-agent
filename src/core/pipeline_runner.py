@@ -3,16 +3,19 @@ import sys
 import re
 import time
 from datetime import datetime
+import agent_config as config
 from src.utils.logger import logger
 from src.fetchers.ieee_fetcher import fetch_ieee_papers
 from src.fetchers.arxiv_fetcher import fetch_arxiv_papers
 from src.fetchers.semantic_scholar_fetcher import fetch_semantic_scholar_papers
+from src.fetchers.citation_enricher import enrich_literature_review
 from src.utils.pdf_downloader import download_pdfs
-from src.utils.ezproxy_auth import (
+from src.auth import (
     prompt_auth_instructions_if_needed,
     COOKIES_FILE_PATH,
     load_ezproxy_cookies,
     verify_live_ieee_access,
+    EZProxyManager,
 )
 from src.agents.sub_agents import (
     analyze_kinematic,
@@ -38,23 +41,20 @@ def build_auth_required_message(reason: str, query: str = "") -> str:
         "- **Session Status:** ❌ Session cookies are missing, invalid, or expired\n\n"
         "---\n\n"
         "### 💡 How to Proceed (Choose one option):\n\n"
-        "#### Option 1: Provide Session Cookie in OpenWebUI (Recommended - No Restart Needed)\n"
-        "1. Open your browser where you are logged into your institution / IEEE Xplore.\n"
-        "2. Copy your active `ezproxy` session cookie value (via `F12 ➔ Application ➔ Cookies` or the `Cookie-Editor` extension).\n"
-        "3. In OpenWebUI, open the pipeline settings (⚙️ **Valves**).\n"
-        "4. Paste the cookie into **`EZPROXY_COOKIE`** and save.\n"
+        "#### Option 1: Trigger Automated Browser 2FA Login in Chat\n"
+        "Type `/login` in OpenWebUI chat. The agent will launch the browser workflow, send a push notification to your phone, and return here once approved.\n\n"
+        "#### Option 2: Provide Session Cookies in OpenWebUI (Fastest if already logged in)\n"
+        "1. In your browser where IEEE Xplore is already logged in (shows *Access provided by: Afeka College*):\n"
+        "2. Copy your active cookies (`F12 ➔ Application ➔ Cookies` or `Cookie-Editor` extension).\n"
+        "3. In OpenWebUI, open pipeline settings (⚙️ **Valves**).\n"
+        "4. Paste into **`EZPROXY_COOKIE`** and save.\n"
         "5. Resubmit your research prompt!\n\n"
-        "#### Option 2: Run Terminal SSO Authenticator\n"
+        "#### Option 3: Run Authenticator on Server\n"
         "In your server terminal, execute:\n"
         "```bash\n"
-        "python3 src/utils/sso_login.py\n"
+        "python3 -m src.auth.ezproxy_session\n"
         "```\n"
-        "*(Enter your institutional credentials and approve the push notification on your phone)*.\n\n"
-        "#### Option 3: Research Open-Access Preprints (No Subscription Needed)\n"
-        "In pipeline settings (⚙️ **Valves**):\n"
-        "- Set **`ENABLE_IEEE = False`**\n"
-        "- Set **`ENABLE_ARXIV = True`**\n"
-        "The pipeline will immediately perform a full multi-agent review on open ArXiv preprints without requiring institutional login.\n"
+        "*(Approve the fingerprint push notification on your mobile phone)*.\n"
     )
 
 
@@ -64,7 +64,7 @@ def extract_core_keywords(query: str) -> str:
     in OpenWebUI, this extracts clean academic search terms so search APIs don't fail.
     """
     if not query or not query.strip():
-        return "text-to-motion human motion"
+        return config.DEFAULT_SEARCH_QUERY
 
     cleaned = query.strip()
     words = cleaned.split()
@@ -98,29 +98,27 @@ def extract_core_keywords(query: str) -> str:
         return " ".join(core_terms)
 
     clean_words = [w for w in re.sub(r'[^a-zA-Z0-9\s-]', '', cleaned_lower).split() if len(w) > 2]
-    return " ".join(clean_words[:5]) if clean_words else "text-to-motion human motion"
-
-
-from src.utils.sso_login import login_afeka_sso
+    return " ".join(clean_words[:5]) if clean_words else config.DEFAULT_SEARCH_QUERY
 
 
 def execute_t2m_research(
-    query: str = "text-to-motion human motion",
-    enable_ieee: bool = True,
-    enable_scholar: bool = False,
-    enable_arxiv: bool = False,
-    enable_semantic_scholar: bool = False,
-    max_results_per_domain: int = 5,
+    query: str = config.DEFAULT_SEARCH_QUERY,
+    enable_ieee: bool = config.ENABLE_IEEE_DEFAULT,
+    enable_scholar: bool = config.ENABLE_SCHOLAR_DEFAULT,
+    enable_arxiv: bool = config.ENABLE_ARXIV_DEFAULT,
+    enable_semantic_scholar: bool = config.ENABLE_SEMANTIC_SCHOLAR_DEFAULT,
+    max_results_per_domain: int = config.MAX_RESULTS_PER_DOMAIN,
     ezproxy_cookie: str = "",
-    ezproxy_domain: str = "ezproxy.afeka.ac.il",
+    ezproxy_domain: str = config.EZPROXY_DOMAIN_DEFAULT,
     kinematic_prompt: str = None,
     physics_prompt: str = None,
     rl_prompt: str = None,
     pose_prompt: str = None,
     orchestrator_prompt: str = None,
     save_output_file: bool = True,
-    auto_sso_login: bool = True,
+    auto_sso_login: bool = config.AUTO_SSO_LOGIN_DEFAULT,
     status_callback: callable = None,
+    output_filename: str = config.DEFAULT_OUTPUT_FILE,
 ) -> str:
     """
     Central core execution engine for T2M Research Agent.
@@ -148,34 +146,11 @@ def execute_t2m_research(
         if status_callback:
             status_callback("🔍 Verifying IEEE institutional access...")
 
-        is_authed, reason = verify_live_ieee_access(cookie_override=ezproxy_cookie)
-
-        # If unauthenticated, attempt automated Mobile Push SSO login if credentials exist
-        if not is_authed and auto_sso_login:
-            has_user = bool(os.getenv("IEEE_USERNAME", "").strip())
-            has_pass = bool(os.getenv("IEEE_PASSWORD", "").strip())
-
-            if has_user and has_pass:
-                logger.info("[*] Access check failed. Initiating automatic Afeka SSO 2FA login...")
-                if status_callback:
-                    status_callback(f"⚠️ Access check: {reason}\n\n🔐 Initiating automatic Afeka SSO mobile push authentication...")
-
-                sso_ok, sso_msg = login_afeka_sso(
-                    status_callback=status_callback,
-                    interactive_fallback=False
-                )
-
-                if sso_ok:
-                    # Re-verify live access with newly acquired cookies
-                    is_authed, reason = verify_live_ieee_access()
-                    if is_authed:
-                        logger.info(f"✅ [HEALTH-CHECK RE-VERIFIED] {reason}")
-                        if status_callback:
-                            status_callback(f"✅ {reason}\n\n🚀 Resuming research pipeline...\n")
-                    else:
-                        logger.warning(f"🛑 [RE-VERIFY FAILED] {reason}")
-                else:
-                    logger.warning(f"🛑 [SSO FAILED] {sso_msg}")
+        manager = EZProxyManager(cookie_override=ezproxy_cookie)
+        is_authed, reason = manager.ensure_valid_session(
+            auto_login=auto_sso_login,
+            status_callback=status_callback,
+        )
 
         if not is_authed:
             logger.warning(f"🛑 [FAIL-FAST] IEEE Authentication check failed: {reason}")
@@ -298,33 +273,40 @@ def execute_t2m_research(
         f"{final_review}"
     )
 
+    # 4. ACADEMIC CREDIBILITY & PEER-REVIEW ENRICHMENT
+    if unique_papers:
+        if status_callback:
+            status_callback("📊 Enriching review with CrossRef and ArXiv peer-review verification...")
+        summary_header = enrich_literature_review(summary_header, papers=unique_papers)
+
     if save_output_file:
-        output_dir = os.path.join(project_root, "articles")
-        timestamped_path = os.path.join(output_dir, f"literature_review_{int(time.time())}.md")
-        output_path = os.path.join(project_root, "LITERATURE_REVIEW.md")
-        
-        # Get UID/GID of host project folder
+        output_path = os.path.join(project_root, output_filename)
         try:
             st = os.stat(project_root)
             host_uid, host_gid = st.st_uid, st.st_gid
         except Exception:
             host_uid, host_gid = 1000, 1000
 
-        os.makedirs(output_dir, exist_ok=True)
         try:
-            os.chown(output_dir, host_uid, host_gid)
-            os.chmod(output_dir, 0o777)
-        except Exception:
-            pass
-
-        for p in [output_path, timestamped_path]:
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(summary_header)
             try:
-                with open(p, "w", encoding="utf-8") as f:
-                    f.write(summary_header)
-                os.chown(p, host_uid, host_gid)
-                os.chmod(p, 0o666)
-                logger.info(f"✅ Review file saved with host owner ({host_uid}:{host_gid}): {p}")
-            except Exception as e:
-                logger.error(f"[!] Failed to write review file {p}: {e}")
+                os.chown(output_path, host_uid, host_gid)
+                os.chmod(output_path, 0o666)
+            except Exception:
+                pass
+            logger.info(f"✅ Review file saved to: {output_path}")
+        except Exception as e:
+            logger.error(f"[!] Failed to write review file {output_path}: {e}")
 
     return summary_header
+
+
+if __name__ == "__main__":
+    print("==================================================")
+    print("🔬 Pipeline Runner Standalone Health Check")
+    print("==================================================")
+    manager = EZProxyManager()
+    status = manager.check_status()
+    print(f"[*] Auth Status: {status['message']}")
+    print("==================================================")

@@ -30,7 +30,7 @@ Includes multi-fetcher academic search across **Google Scholar**, **IEEE Xplore*
    - **Master Orchestrator:** Synthesizes sub-agent reports into an academic Literature Review chapter with comparative tables and research gaps.
 
 5. **Open WebUI Pipelines & Valves Integration (`openwebui/`):**
-   - Configurable Valves for enabling/disabling fetchers (`ENABLE_SCHOLAR`, `ENABLE_IEEE`, `ENABLE_ARXIV`, `ENABLE_SEMANTIC_SCHOLAR`), adjusting paper counts, and customizing system prompts.
+   - Configurable Valves for enabling/disabling fetchers (`ENABLE_IEEE`, `ENABLE_SCHOLAR`, `ENABLE_ARXIV`, `ENABLE_SEMANTIC_SCHOLAR`), adjusting paper counts, and customizing system prompts.
 
 ---
 
@@ -39,25 +39,33 @@ Includes multi-fetcher academic search across **Google Scholar**, **IEEE Xplore*
 ```text
 t2m-research-agent/
 ├── src/                          # CORE PYTHON SYSTEM
-│   ├── fetchers/                 
+│   ├── auth/                     # INSTITUTIONAL AUTHENTICATION & EZPROXY
+│   │   ├── __init__.py           # Package exports
+│   │   ├── ezproxy_session.py    # Unified EZProxyManager & Session Engine
+│   │   ├── afeka_sso.py          # Browser-driven Playwright 2FA SSO Automation
+│   │   ├── ezproxy_auth.py       # URL Rewriter & Live Access Verifier
+│   │   ├── import_cookies.py     # Interactive CLI Cookie Importer
+│   │   ├── playwright_login.py   # Automated login compatibility wrapper
+│   │   └── sso_login.py          # Direct SSO Authentication Runner
+│   ├── fetchers/                 # ACADEMIC SEARCH ENGINES
 │   │   ├── scholar_fetcher.py    # Google Scholar Index Fetcher
 │   │   ├── ieee_fetcher.py       # IEEE Xplore & OpenAlex Metadata Search
 │   │   ├── arxiv_fetcher.py      # ArXiv Preprint Fetcher
-│   │   └── semantic_scholar_fetcher.py # Semantic Scholar API
-│   ├── agents/                   
+│   │   ├── semantic_scholar_fetcher.py # Semantic Scholar API
+│   │   └── citation_enricher.py  # CrossRef & ArXiv Academic Credibility Enricher
+│   ├── agents/                   # LLM SYNTHESIS AGENTS
 │   │   ├── orchestrator.py       # Master Orchestrator LLM Agent
 │   │   └── sub_agents.py         # Specialized Domain Sub-Agents
-│   ├── utils/                    
-│   │   ├── paper_utils.py        # GitHub link extractor & Impact Factor estimator
-│   │   ├── ezproxy_auth.py       # Institutional URL Rewriter & Cookie Session Manager
-│   │   ├── pdf_downloader.py     # PDF Downloader with EZproxy & ArXiv Fallback
+│   ├── utils/                    # CROSS-CUTTING UTILITIES
+│   │   ├── pdf_downloader.py     # PDF Downloader with Authenticated Sessions
 │   │   └── logger.py             # System Logger
 │   └── core/
-│       └── pipeline_runner.py    # Core execution pipeline
+│       └── pipeline_runner.py    # Central pipeline execution engine
 ├── openwebui/                    # OPEN WEBUI INTEGRATION LAYER
 │   ├── t2m_pipeline.py           # Open WebUI Custom Pipeline Wrapper with Valves
 │   └── t2m_openwebui_tool.py     # Open WebUI Importable Tool
-├── literature_review.md          # Generated Literature Review & Peer-Review Table
+├── LITERATURE_REVIEW.md          # Generated Literature Review & Peer-Review Table
+├── articles/                     # Downloaded Full-Text PDFs
 ├── main.py                       # CLI Execution Entry Point
 ├── requirements.txt              # Dependency Specifications
 └── README.md                     # Documentation
@@ -75,37 +83,49 @@ pip install -r requirements.txt
 playwright install chromium
 ```
 
-### 2. Configure Environment (`.env`)
-Edit `.env` in the root directory:
-```env
-OPENROUTER_API_KEY=sk-or-v1-YOUR_KEY_HERE
-API_BASE_URL=https://openrouter.ai/api/v1
-MODEL_NAME=anthropic/claude-3.5-sonnet
-IEEE_INSTITUTION=afeka
-IEEE_USERNAME=dmitry.strizhak@s.afeka.ac.il
-IEEE_PASSWORD=YOUR_PASSWORD_HERE
-EZPROXY_COOKIE=
+### 2. Configure Environment (`.env` & `config.py`)
+Copy the template and edit your credentials in `.env`:
+```bash
+cp .env.example .env
 ```
+
+`config.py` acts as the **Single Source of Truth (SSOT)** for all system parameters, academic fetcher defaults, and LLM configuration:
+- `OPENROUTER_API_KEY`: API Key for LLM inference (OpenRouter / OpenAI / local vLLM).
+- `API_BASE_URL`: Endpoint URL (defaults to `https://openrouter.ai/api/v1`).
+- `MODEL_NAME`: Target model (defaults to `anthropic/claude-3.5-sonnet`).
+- `MAX_RESULTS_PER_DOMAIN`: Search limit per domain (defaults to `5`).
+- `ENABLE_IEEE`, `ENABLE_SCHOLAR`, `ENABLE_ARXIV`, `ENABLE_SEMANTIC_SCHOLAR`: Boolean fetcher toggles.
+- `DEFAULT_SEARCH_QUERY`: Default prompt fallback.
+- `DEFAULT_OUTPUT_FILE`: Master report path (defaults to `LITERATURE_REVIEW.md`).
+- `IEEE_INSTITUTION`, `IEEE_USERNAME`, `IEEE_PASSWORD`: Institutional credentials for automated 2FA login.
+- `EZPROXY_DOMAIN`, `AUTO_SSO_LOGIN`: EZproxy host and auto-login flag.
 
 ---
 
-## 🔐 Authentication & Token Guard
+## 🔐 Authentication & Session Management (`src/auth/`)
 
-The framework features an automated **Live Health-Check, Fail-Fast Token Guard, and Graceful Fallback**:
+The framework consolidates institutional authentication and token preservation into a unified `src/auth/` package:
 
-1. **Preemptive Live Probe:**
-   Before querying academic search APIs or calling AI sub-agents, the pipeline executes a lightweight 1-second probe to IEEE Xplore.
-2. **In-Chat Mobile Push SSO (`/login`):**
-   If institutional cookies are missing or expired, the pipeline can automatically trigger Afeka College SSO authentication:
-   - Type `/login` in OpenWebUI (or submit a prompt with `AUTO_SSO_LOGIN=True`).
-   - A 2FA push notification is sent to your mobile phone.
-   - Simply approve with your fingerprint. The pipeline captures the session and proceeds with full PDF extraction.
+1. **Preemptive Live Probe (`EZProxyManager`):**
+   Before querying academic search APIs or calling AI sub-agents, `EZProxyManager` executes a lightweight 1-second live probe to IEEE Xplore to verify full-text download entitlement.
+2. **In-Process Automated 2FA SSO:**
+   If institutional cookies are missing or expired:
+   - Type `/login` in OpenWebUI (or submit a research query with `AUTO_SSO_LOGIN=True`).
+   - The browser flow navigates to IEEE Xplore via Afeka College SSO and sends a 2FA push notification to your phone.
+   - Simply approve with your fingerprint. The manager captures new session cookies and resumes execution.
 3. **Fail-Fast Token Preservation:**
-   If access is unauthenticated or push is not approved, execution halts immediately (**0 LLM tokens spent**) and returns actionable resolution instructions.
+   If access is unauthenticated or push is not approved, execution halts immediately (**0 LLM tokens spent**) and returns clear resolution steps.
 4. **Standalone CLI Diagnostics:**
-   Test your current session entitlement directly in terminal:
+   Every authentication module includes an isolated test block for terminal verification:
    ```bash
-   python3 -m src.utils.ezproxy_auth
+   # Check session status and verify live IEEE Xplore access
+   python3 -m src.auth.ezproxy_session
+
+   # Run direct IEEE live probe
+   python3 -m src.auth.ezproxy_auth
+
+   # Trigger automated 2FA login directly
+   python3 -m src.auth.afeka_sso
    ```
 
 ---
@@ -126,13 +146,10 @@ python3 main.py
    - `ENABLE_SCHOLAR` (Toggle Google Scholar indexing)
    - `AUTO_SSO_LOGIN` (Auto-trigger mobile push 2FA on phone when cookies expire)
    - `EZPROXY_COOKIE` (Optional raw cookie override)
-4. Use commands:
-   - Type `/login` to trigger mobile push authentication and refresh your session.
-   - Enter your research query to generate a complete multi-agent literature review!
+4. Submit your research prompt to generate a complete multi-agent literature review!
 
 ---
 
 ## 📊 Outputs & Artifacts
 - `LITERATURE_REVIEW.md`: Complete literature review report saved in root directory.
 - `articles/*.pdf`: Directory containing downloaded full-text PDF files.
-

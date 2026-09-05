@@ -15,8 +15,8 @@ setup:
 	$(VENV_BIN)/pip install --upgrade pip
 	$(VENV_BIN)/pip install -r requirements.txt
 	@if [ ! -f .env ]; then \
-		echo "OPENROUTER_API_KEY=your_api_key_here\nAPI_BASE_URL=https://openrouter.ai/api/v1\nMODEL_NAME=anthropic/claude-3.5-sonnet" > .env; \
-		echo "[!] Created .env file. Please add your API key before running."; \
+		cp .env.example .env; \
+		echo "[!] Copied .env.example to .env. Please configure your credentials before running."; \
 	fi
 
 # Run the research agent (fetches and analyzes papers)
@@ -24,10 +24,10 @@ run:
 	@echo "[*] Running the Multi-Agent Research Framework..."
 	$(VENV_BIN)/python main.py
 
-# Enrich the generated literature review with OpenAlex publication metadata
+# Enrich the generated literature review with CrossRef/ArXiv metadata
 enrich:
-	@echo "[*] Enriching Literature Review with OpenAlex metadata..."
-	$(VENV_BIN)/python enrich_review.py
+	@echo "[*] Enriching Literature Review with citation metadata..."
+	$(VENV_BIN)/python -m src.fetchers.citation_enricher
 
 # Clean up
 clean:
