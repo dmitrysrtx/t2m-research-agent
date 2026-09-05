@@ -1,4 +1,5 @@
 import os
+import re
 import requests
 import time
 import agent_config as config
@@ -115,9 +116,9 @@ def _fetch_from_openalex_ieee(query, max_results, ezproxy_domain):
             ieee_url = landing_url if landing_url else (doi_str if doi_str else f"https://ieeexplore.ieee.org/search/searchresult.jsp?newsearch=true&queryText={title}")
 
             if not pdf_url and "10.1109" in doi_str:
-                m = re.search(r'arnumber=(\d+)', landing_url) or re.search(r'/document/(\d+)', landing_url) or re.search(r'(\d{7,8})', doi_str)
+                m = re.search(r'arnumber=(\d+)', landing_url) or re.search(r'/document/(\d+)', landing_url) or re.search(r'(\d{6,8})(?:/[^/]+)?$', doi_str)
                 if m:
-                    pdf_url = f"https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber={m.group(1)}"
+                    pdf_url = f"https://ieeexplore.ieee.org/stampPDF/getPDF.jsp?tp=&arnumber={m.group(1)}"
                 else:
                     pdf_url = doi_str if doi_str.startswith("http") else f"https://doi.org/{doi_str}"
 
@@ -173,9 +174,14 @@ def _fetch_from_crossref_ieee(query, max_results, ezproxy_domain):
                 if not title or not doi:
                     continue
                     
-                arnumber = doi.split("10.1109/")[-1].split(".")[0] if "10.1109/" in doi else ""
-                ieee_url = f"https://doi.org/{doi}"
-                pdf_url = f"https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber={arnumber}" if arnumber else ieee_url
+                m = re.search(r'(\d{6,8})(?:/[^/]+)?$', doi)
+                if m:
+                    arnumber = m.group(1)
+                    ieee_url = f"https://ieeexplore.ieee.org/document/{arnumber}"
+                    pdf_url = f"https://ieeexplore.ieee.org/stampPDF/getPDF.jsp?tp=&arnumber={arnumber}"
+                else:
+                    ieee_url = f"https://doi.org/{doi}"
+                    pdf_url = f"https://doi.org/{doi}"
                 
                 abstract_raw = item.get('abstract', '')
                 # Clean basic HTML tags in Crossref abstracts if present

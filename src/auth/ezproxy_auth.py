@@ -26,19 +26,10 @@ def set_host_permissions(target_path: str) -> None:
 
 def get_institutional_credentials(valves=None) -> dict:
     """Retrieves institutional credentials following Precedence Cascade."""
-    institution = os.getenv("IEEE_INSTITUTION", "afeka")
-    username = os.getenv("IEEE_USERNAME", "")
-    password = os.getenv("IEEE_PASSWORD", "")
-
-    if valves:
-        if hasattr(valves, "IEEE_INSTITUTION") and valves.IEEE_INSTITUTION and valves.IEEE_INSTITUTION.strip():
-            institution = valves.IEEE_INSTITUTION.strip()
-        if hasattr(valves, "IEEE_USERNAME") and valves.IEEE_USERNAME and valves.IEEE_USERNAME.strip():
-            username = valves.IEEE_USERNAME.strip()
-        if hasattr(valves, "IEEE_PASSWORD") and valves.IEEE_PASSWORD and valves.IEEE_PASSWORD.strip():
-            password = valves.IEEE_PASSWORD.strip()
-
-    return {"institution": institution, "username": username, "password": password}
+    inst = getattr(valves, "IEEE_INSTITUTION", None) or os.getenv("IEEE_INSTITUTION", "afeka")
+    user = getattr(valves, "IEEE_USERNAME", None) or os.getenv("IEEE_USERNAME", "")
+    pwd = getattr(valves, "IEEE_PASSWORD", None) or os.getenv("IEEE_PASSWORD", "")
+    return {"institution": str(inst).strip(), "username": str(user).strip(), "password": str(pwd).strip()}
 
 
 def convert_to_ezproxy_url(url: str, ezproxy_domain: str = None) -> str:
@@ -122,10 +113,19 @@ def verify_live_ieee_access(session=None, valves=None, cookie_override: str = No
     if not cookies:
         return False, "Session cookies not found (ezproxy_cookies.json is missing or empty)."
 
-    f5_only_keys = {"MRHSession", "LastMRH_Session", "F5_ST", "TS01df1230"}
     cookie_keys = set(cookies.keys())
-    if cookie_keys and cookie_keys.issubset(f5_only_keys):
-        return False, "Saved cookies are Afeka internal portal cookies, not IEEE Xplore cookies."
+    if cookie_keys and any(k in cookie_keys for k in ["MRHSession", "LastMRH_Session"]):
+        try:
+            f5_s = requests.Session()
+            f5_s.headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36"
+            for k, v in cookies.items():
+                f5_s.cookies.set(k, v)
+            chk = f5_s.get("https://sso.afeka.ac.il/my.policy", verify=False, timeout=timeout, allow_redirects=False)
+            if chk.status_code in (301, 302, 303, 307) or "logout" in chk.text.lower() or "webtop" in chk.text.lower() or "vdesk" in chk.url:
+                return True, "Afeka institutional SSO session confirmed active."
+            return False, "Afeka institutional SSO session expired. Needs 2FA renewal."
+        except Exception as e:
+            return False, f"Afeka SSO connection error: {e}"
 
     if session is None:
         from src.auth.ezproxy_session import get_authenticated_session
@@ -133,28 +133,32 @@ def verify_live_ieee_access(session=None, valves=None, cookie_override: str = No
 
     probe_url = "https://ieeexplore.ieee.org/stampPDF/getPDF.jsp?tp=&arnumber=6811462"
     try:
+        # Check initial response first (fast fail if redirected to login)
         resp = session.get(probe_url, stream=True, timeout=timeout, allow_redirects=False)
 
+        has_erights = any("erights" in k.lower() for k in cookie_keys)
+        erights_hint = "" if has_erights else f" (ezproxy_cookies.json has {len(cookies)} cookies, but missing institutional token 'ERIGHTS')"
+
         if resp.status_code in (301, 302, 303, 307):
-            loc = resp.headers.get("Location", "")
-            if "pdf" in loc.lower() or "/iel" in loc.lower():
-                return True, "Full-text PDF access to IEEE Xplore confirmed."
-            if any(k in loc.lower() for k in ["login", "authdecision", "-203"]):
-                return False, "Session expired or unauthenticated (IEEE redirected to login)."
-            return False, f"Redirected to authentication page: {loc[:60]}..."
+            loc = resp.headers.get("Location", "").lower()
+            if any(k in loc for k in ["login", "authdecision", "-203", "wayf", "my.policy", "signin"]):
+                return False, f"Session unauthenticated (IEEE redirected to login){erights_hint}."
+            # Follow legitimate redirect (e.g. to PDF CDN)
+            resp = session.get(resp.headers["Location"], stream=True, timeout=timeout, allow_redirects=True)
+
+        content_type = resp.headers.get("Content-Type", "").lower()
+        chunk = next(resp.iter_content(128), b"")
+
+        # True authenticated response returns 200 and binary PDF stream
+        if resp.status_code == 200 and (chunk.startswith(b"%PDF") or ("pdf" in content_type and b"<html" not in chunk.lower())):
+            return True, "Full-text PDF access to IEEE Xplore confirmed."
+
+        # Detect HTML login / auth walls
+        if "login" in resp.url.lower() or "authdecision" in resp.url.lower() or "html" in content_type or b"<html" in chunk.lower():
+            return False, f"Session unauthenticated (IEEE served login page){erights_hint}."
 
         if resp.status_code in (401, 403):
             return False, f"HTTP {resp.status_code}: Access denied by institutional firewall."
-
-        if resp.status_code == 200:
-            content_type = resp.headers.get("Content-Type", "").lower()
-            if "pdf" in content_type:
-                return True, "Full-text PDF access to IEEE Xplore confirmed."
-            chunk = next(resp.iter_content(128), b"")
-            if chunk.startswith(b"%PDF"):
-                return True, "Full-text PDF access to IEEE Xplore confirmed."
-            if "html" in content_type or b"<html" in chunk.lower():
-                return False, "Received HTML login page instead of PDF binary stream."
 
         return False, f"Unexpected response status from IEEE server: HTTP {resp.status_code}."
     except requests.exceptions.Timeout:

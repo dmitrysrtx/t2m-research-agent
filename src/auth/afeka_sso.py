@@ -14,7 +14,6 @@ from src.auth.ezproxy_auth import (
 load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
 IEEE_HOME_URL = "https://ieeexplore.ieee.org"
 
-
 def _find_clickable(page, selectors: list):
     """Tries a list of selectors and returns the first visible element."""
     for sel in selectors:
@@ -25,7 +24,6 @@ def _find_clickable(page, selectors: list):
         except Exception:
             pass
     return None
-
 
 def run_browser_auth_flow(
     username: str = None,
@@ -64,13 +62,7 @@ def run_browser_auth_flow(
             browser = p.chromium.launch(
                 headless=headless,
                 executable_path=exec_path,
-                args=[
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-gpu",
-                    "--disable-blink-features=AutomationControlled",
-                ],
+                args=["--no-sandbox", "--disable-gpu", "--disable-blink-features=AutomationControlled"],
             )
             context = browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -84,19 +76,15 @@ def run_browser_auth_flow(
             page.goto(IEEE_HOME_URL, timeout=30000, wait_until="domcontentloaded")
             page.wait_for_timeout(2000)
 
-            # Dismiss cookie consent
-            cookie_accept = _find_clickable(page, ['button:has-text("Accept")', '#onetrust-accept-btn-handler', 'button[aria-label="Accept"]'])
+            cookie_accept = _find_clickable(page, ['button:has-text("Accept")', '#onetrust-accept-btn-handler'])
             if cookie_accept:
-                try:
-                    cookie_accept.click()
-                    page.wait_for_timeout(1000)
-                except Exception:
-                    pass
+                try: cookie_accept.click()
+                except Exception: pass
 
             # 2. Open Institutional Sign In
             if status_callback:
                 status_callback("🔑 Opening Institutional Sign In on IEEE Xplore...")
-            inst_btn = _find_clickable(page, ['button:has-text("Institutional Sign In")', 'a:has-text("Institutional Sign In")', 'a[href*="wayf"]'])
+            inst_btn = _find_clickable(page, ['button:has-text("Institutional Sign In")', 'a:has-text("Institutional Sign In")'])
             if inst_btn:
                 inst_btn.click()
             else:
@@ -112,7 +100,7 @@ def run_browser_auth_flow(
                 if search_input:
                     search_input.fill("Afeka")
                     page.wait_for_timeout(1500)
-                    item = _find_clickable(page, ['li:has-text("Afeka")', 'a:has-text("Afeka")', 'button:has-text("Afeka")'])
+                    item = _find_clickable(page, ['li:has-text("Afeka")', 'a:has-text("Afeka")'])
                     if item:
                         item.click()
 
@@ -120,79 +108,93 @@ def run_browser_auth_flow(
             if status_callback:
                 status_callback("🏛️ Redirecting to Afeka College Identity Provider (sso.afeka.ac.il)...")
             try:
-                page.wait_for_url("**/sso.afeka.ac.il/**", timeout=20000)
+                page.wait_for_url("**/sso.afeka.ac.il/**", timeout=15000)
             except Exception:
                 pass
             page.wait_for_timeout(2000)
 
+            if "sso.afeka.ac.il" not in page.url:
+                browser.close()
+                err_msg = (
+                    "Could not navigate to Afeka SSO portal. "
+                    "IEEE Xplore institutional options did not respond or blocked automated discovery."
+                )
+                if status_callback:
+                    status_callback(f"\n❌ {err_msg}\n")
+                return False, err_msg
+
             # 5. Fill Afeka Login Credentials
             user_input = page.query_selector('input[name="username"], input[type="text"]')
             pass_input = page.query_selector('input[name="password"], input[type="password"]')
-            if user_input and pass_input:
-                user_input.fill(clean_username)
-                pass_input.fill(password.strip())
-                radios = page.query_selector_all('input[type="radio"]')
-                if radios:
-                    try:
-                        radios[0].check()
-                    except Exception:
-                        pass
-                submit_btn = page.query_selector('input[type="submit"], button:has-text("כניסה"), button[type="submit"]')
-                if submit_btn:
-                    submit_btn.click()
+            if not user_input or not pass_input:
+                browser.close()
+                err_msg = "Afeka SSO login input fields not found on authentication portal."
+                if status_callback:
+                    status_callback(f"\n❌ {err_msg}\n")
+                return False, err_msg
 
-            # 6. Wait for 2FA push notification approval
-            push_msg = "📱 Push notification sent to mobile phone! Please approve with your fingerprint..."
+            user_input.fill(clean_username)
+            pass_input.fill(password.strip())
+            radios = page.query_selector_all('input[type="radio"]')
+            if radios:
+                try: radios[0].check()
+                except Exception: pass
+            submit_btn = page.query_selector('input[type="submit"], button:has-text("כניסה"), button[type="submit"]')
+            if submit_btn:
+                submit_btn.click()
+
             if status_callback:
-                status_callback(f"\n{push_msg}\n")
+                status_callback("\n📱 Push notification sent to mobile phone! Please approve with your fingerprint...\n")
 
             # 7. Wait for redirect back to IEEE Xplore
             if status_callback:
                 status_callback("⏳ Waiting for fingerprint approval and redirect back to IEEE Xplore...")
+            reached_ieee = False
             try:
                 page.wait_for_url("**/ieeexplore.ieee.org/**", timeout=approval_timeout * 1000)
-            except Exception:
-                pass
-            page.wait_for_timeout(3000)
+                reached_ieee = True
+            except Exception as e:
+                logger.warning(f"[*] 2FA approval wait timed out or redirect did not complete: {e}")
+            page.wait_for_timeout(5000)
+
+            if not reached_ieee and "ieeexplore.ieee.org" not in page.url:
+                browser.close()
+                err_msg = "Mobile 2FA push notification was not approved within timeout or login was cancelled."
+                if status_callback:
+                    status_callback(f"\n❌ {err_msg}\n")
+                return False, err_msg
 
             # 8. Extract authenticated session cookies
             all_cookies = context.cookies()
-            cookies_dict = {c["name"]: c["value"] for c in all_cookies}
-            if cookies_dict:
+            cookies_dict = {c["name"]: c["value"] for c in all_cookies if "ieee.org" in c.get("domain", "") or not c.get("domain")}
+            if not cookies_dict:
+                cookies_dict = {c["name"]: c["value"] for c in all_cookies}
+
+            browser.close()
+            test_sess = requests.Session()
+            for k, v in cookies_dict.items():
+                test_sess.cookies.set(k, v, domain=".ieee.org", path="/")
+                test_sess.cookies.set(k, v, domain="ieeexplore.ieee.org", path="/")
+
+            is_valid, probe_reason = verify_live_ieee_access(session=test_sess)
+            if is_valid:
                 with open(COOKIES_FILE_PATH, "w", encoding="utf-8") as f:
                     json.dump(cookies_dict, f, indent=2)
                 set_host_permissions(COOKIES_FILE_PATH)
-
-            browser.close()
-
-            # 9. Verify live access immediately
-            is_valid, probe_reason = verify_live_ieee_access()
-            if is_valid:
-                succ = f"🎉 Successfully authenticated! {len(cookies_dict)} session cookies saved to {COOKIES_FILE_PATH}"
-                if status_callback:
-                    status_callback(f"\n{succ}\n")
+                succ = f"🎉 Successfully authenticated! {len(cookies_dict)} session cookies saved."
+                if status_callback: status_callback(f"\n{succ}\n")
                 return True, succ
-            else:
-                warn = f"Cookies saved, but live IEEE probe failed: {probe_reason}"
-                if status_callback:
-                    status_callback(f"\n⚠️ {warn}\n")
-                return False, warn
+            warn = f"Automated 2FA completed, but IEEE session validation failed: {probe_reason}"
+            if status_callback: status_callback(f"\n⚠️ {warn}\n")
+            return False, warn
 
     except Exception as e:
         err = f"Authentication error: {e}"
-        if status_callback:
-            status_callback(f"\n❌ {err}\n")
+        if status_callback: status_callback(f"\n❌ {err}\n")
         return False, err
 
 
 if __name__ == "__main__":
-    def print_cb(msg: str):
-        print(f"[*] {msg}")
-
-    print("==================================================")
-    print("🔐 Standalone Afeka SSO Browser Flow (Host Playwright)")
-    print("==================================================")
-    ok, message = run_browser_auth_flow(status_callback=print_cb)
-    print(f"\nResult: {'SUCCESS' if ok else 'FAILED'}")
-    print(message)
+    ok, message = run_browser_auth_flow(status_callback=lambda m: print(f"[*] {m}"))
+    print(f"\nResult: {'SUCCESS' if ok else 'FAILED'}\n{message}")
     sys.exit(0 if ok else 1)

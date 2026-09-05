@@ -85,7 +85,23 @@ t2m-research-agent/
   4. Fully deprecated and removed `infra/auth_service/` (standalone Flask server on port 8055) in favor of direct in-process execution.
   5. Cleaned up `src/utils/` so only cross-cutting utilities (`logger.py` and `pdf_downloader.py`) remain.
   6. Updated all dependent modules (`src/fetchers/`, `src/core/pipeline_runner.py`, `openwebui/t2m_pipeline.py`).
-  7. Enforced standalone testability via `if __name__ == '__main__':` on all auth, fetcher, and core modules.
+### 2026-09-05: IEEE PDF Download Engine & Live Auth Verification Fixes
+- **Goal**: Resolve silent PDF download failures in OpenWebUI and eliminate false-positive authentication status reports.
+- **Root Causes & Solutions**:
+  1. **Live Auth False-Positive**: In `src/auth/ezproxy_auth.py`, `verify_live_ieee_access()` evaluated `if "pdf" in loc.lower()` before checking login indicators. When IEEE responded with `302 Found` to `login.jsp?url=%2FstampPDF%2FgetPDF.jsp...&authDecision=-203`, the query string triggered a false-positive pass. Fixed by enabling `allow_redirects=True`, strictly verifying binary `%PDF` streams on 200 responses, and checking for login walls across redirect history.
+  2. **OpenAlex `NameError: re`**: Added missing `import re` in `src/fetchers/ieee_fetcher.py`.
+  3. **Crossref Malformed Article Numbers**: Replaced broken `.split(".")[0]` logic with regex matching (`r'(\d{6,8})(?:/[^/]+)?$'`) and canonical DOI URL fallback (`https://doi.org/{doi}`).
+  4. **PDF Downloader DOI Resolution**: Updated `src/utils/pdf_downloader.py` to follow DOI redirects to `/document/<arnumber>`, resolve to `stampPDF/getPDF.jsp`, strictly enforce binary PDF validation (`is_pdf_bytes`), and accept session / cookie overrides directly from pipeline runner.
+  5. **Docker Config Shadowing**: Renamed pipeline reloader to target `agent_config.py` explicitly, avoiding collisions with OpenWebUI's internal `config.py`.
+
+### 2026-09-05: SSO Browser Automation Phantom Status Fix & Multi-Source PDF Downloader
+- **Goal**: Eliminate false status callbacks in `afeka_sso.py`, prevent dumping unauthenticated guest cookies into `ezproxy_cookies.json`, fix static header poisoning, and enable direct PDF resolution for ArXiv and open-access publications.
+- **Root Causes & Solutions**:
+  1. **Phantom 2FA Notification in `afeka_sso.py`**: The status callback reporting mobile push notification was triggered unconditionally even when Angular modal component `<xpl-seamless-access>` was stuck on loading spinner or blocked by third-party storage partitioning. Furthermore, `page.wait_for_url("**/ieeexplore.ieee.org/**")` immediately returned true because the browser was still on IEEE Xplore, dumping unauthenticated guest cookies. Fixed by strictly verifying navigation to `sso.afeka.ac.il`, only sending push notifications when credentials are submitted, and verifying live access with a test session before overwriting `ezproxy_cookies.json`.
+  2. **Session Cookie Header Poisoning in `ezproxy_session.py`**: Removed `session.headers["Cookie"] = "; ".join(...)` which sent hardcoded IEEE cookies to foreign domains (ArXiv, CrossRef, DOI resolvers). Restricted cookies to `.ieee.org` in `session.cookies` without duplicate sub-domain binding.
+  3. **Multi-Source ArXiv / OpenAccess Resolution in `pdf_downloader.py`**: Added `resolve_direct_pdf_url()` to transform ArXiv abstract URLs (`arxiv.org/abs/...`) to direct binary endpoints (`arxiv.org/pdf/...pdf`), added ArXiv link detection in landing page HTML, added `Referer` headers for IEEE requests, and decoupled requests for non-IEEE sources. Verified direct PDF downloads for ArXiv papers.
+  4. **Diagnostic Transparency & Fast Probe Optimization**: In `src/auth/ezproxy_auth.py`, updated `verify_live_ieee_access()` with `allow_redirects=False` for sub-second fail-fast probe checks, and enhanced diagnostic messages to explicitly report when `ezproxy_cookies.json` was parsed successfully but lacks the institutional `ERIGHTS` token.
+  5. **Direct F5 APM 2FA Mobile Push Restoration**: Restored the direct F5 APM authentication engine in `src/auth/sso_login.py` (`https://sso.afeka.ac.il/my.policy`). When unauthenticated, the pipeline automatically submits credentials to Afeka's F5 gateway, triggering an authentic 2FA mobile push notification to the user's phone, polling until fingerprint approval is granted, and saving the session cookies. Updated `src/auth/ezproxy_auth.py` to live-validate F5 APM sessions and `ezproxy_session.py` to route session cookies appropriately.
 
 ## Key Workflows & Execution Modes
 

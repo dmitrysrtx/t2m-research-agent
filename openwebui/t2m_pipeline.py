@@ -102,7 +102,7 @@ class Pipeline:
         # 🔄 Dynamic module reload on each execution (Hot-Reloading without Docker restart)
         try:
             import importlib
-            import config
+            import agent_config as config
             import src.auth.ezproxy_auth
             import src.auth.ezproxy_session
             import src.auth.afeka_sso

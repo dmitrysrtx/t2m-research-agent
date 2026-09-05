@@ -83,13 +83,13 @@ pip install -r requirements.txt
 playwright install chromium
 ```
 
-### 2. Configure Environment (`.env` & `config.py`)
+### 2. Configure Environment (`.env` & `agent_config.py`)
 Copy the template and edit your credentials in `.env`:
 ```bash
 cp .env.example .env
 ```
 
-`config.py` acts as the **Single Source of Truth (SSOT)** for all system parameters, academic fetcher defaults, and LLM configuration:
+`agent_config.py` (aliased to `config.py` for backward compatibility) acts as the **Single Source of Truth (SSOT)** for all system parameters, academic fetcher defaults, and LLM configuration (avoiding namespace shadowing inside Docker containers):
 - `OPENROUTER_API_KEY`: API Key for LLM inference (OpenRouter / OpenAI / local vLLM).
 - `API_BASE_URL`: Endpoint URL (defaults to `https://openrouter.ai/api/v1`).
 - `MODEL_NAME`: Target model (defaults to `anthropic/claude-3.5-sonnet`).

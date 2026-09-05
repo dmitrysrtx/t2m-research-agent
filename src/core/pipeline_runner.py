@@ -140,13 +140,14 @@ def execute_t2m_research(
         os.environ["EZPROXY_COOKIE"] = ezproxy_cookie.strip()
         logger.info("[*] Using EZproxy cookie provided via Valves configuration.")
 
+    manager = EZProxyManager(cookie_override=ezproxy_cookie)
+
     # 🛡️ LIVE HEALTH-CHECK & AUTOMATED SSO FALLBACK:
     if enable_ieee:
         logger.info("[*] Performing Live Health-Check on IEEE institutional access...")
         if status_callback:
             status_callback("🔍 Verifying IEEE institutional access...")
 
-        manager = EZProxyManager(cookie_override=ezproxy_cookie)
         is_authed, reason = manager.ensure_valid_session(
             auto_login=auto_sso_login,
             status_callback=status_callback,
@@ -234,7 +235,12 @@ def execute_t2m_research(
 
     # 2. DOWNLOAD PDFs
     logger.info("\n[2/4] Downloading UNIQUE PDFs for Deep RAG ingestion...")
-    download_count = download_pdfs(unique_papers, output_dir=articles_dir)
+    download_count = download_pdfs(
+        unique_papers,
+        output_dir=articles_dir,
+        session=manager.get_session(),
+        cookie_override=ezproxy_cookie
+    )
 
     # 3. SUB-AGENTS ANALYSIS
     logger.info("\n[3/4] Engaging AI Expert Sub-Agents...")

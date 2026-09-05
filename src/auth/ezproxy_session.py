@@ -36,16 +36,16 @@ class EZProxyManager:
         )
 
     def refresh_session(self, status_callback: callable = None, headless: bool = True) -> tuple:
-        """Triggers browser 2FA flow to refresh credentials."""
-        from src.auth.afeka_sso import run_browser_auth_flow
+        """Triggers 2FA mobile push flow to refresh credentials."""
+        from src.auth.sso_login import login_afeka_sso
 
-        logger.info("[*] EZProxyManager: Initiating automated browser 2FA login...")
+        logger.info("[*] EZProxyManager: Initiating automated 2FA mobile push login...")
         if status_callback:
-            status_callback("🔐 EZProxyManager: Initiating automated browser 2FA login...")
+            status_callback("🔐 EZProxyManager: Initiating automated 2FA mobile push login...")
 
-        ok, msg = run_browser_auth_flow(
-            headless=headless,
+        ok, msg = login_afeka_sso(
             status_callback=status_callback,
+            interactive_fallback=False,
         )
         if ok:
             self._cached_session = None  # Invalidate cached session
@@ -96,12 +96,10 @@ class EZProxyManager:
 
             cookies = load_ezproxy_cookies(self.valves, self.cookie_override)
             for name, value in cookies.items():
-                session.cookies.set(name, value, domain=".ieee.org", path="/")
-                session.cookies.set(name, value, domain="ieeexplore.ieee.org", path="/")
-                session.cookies.set(name, value)
-
-            if cookies:
-                session.headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items())
+                if name in {"MRHSession", "LastMRH_Session", "F5_ST", "TS01df1230"}:
+                    session.cookies.set(name, value, domain=".afeka.ac.il", path="/")
+                else:
+                    session.cookies.set(name, value, domain=".ieee.org", path="/")
 
             self._cached_session = session
 
