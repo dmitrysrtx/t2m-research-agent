@@ -26,7 +26,7 @@ class EZProxyManager:
         """Returns local cookie file status."""
         return check_auth_status(self.valves, self.cookie_override)
 
-    def is_authenticated(self, timeout: int = 6) -> tuple:
+    def is_authenticated(self, timeout: int = 8) -> tuple:
         """Runs live health check against IEEE Xplore."""
         return verify_live_ieee_access(
             session=self._cached_session,
@@ -88,7 +88,7 @@ class EZProxyManager:
                     "AppleWebKit/537.36 (KHTML, like Gecko) "
                     "Chrome/124.0.0.0 Safari/537.36"
                 ),
-                "Accept": "application/pdf,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,application/pdf,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.5,he;q=0.3",
                 "Connection": "keep-alive",
                 "Upgrade-Insecure-Requests": "1",
@@ -99,6 +99,7 @@ class EZProxyManager:
                 if name in {"MRHSession", "LastMRH_Session", "F5_ST", "TS01df1230"}:
                     session.cookies.set(name, value, domain=".afeka.ac.il", path="/")
                 else:
+                    # Set cookie once for .ieee.org domain to prevent header size duplication
                     session.cookies.set(name, value, domain=".ieee.org", path="/")
 
             self._cached_session = session
@@ -128,9 +129,5 @@ if __name__ == "__main__":
     is_authed, reason = manager.is_authenticated()
     print(f"[*] Live Access: {'✅ VALID' if is_authed else '❌ INVALID'}")
     print(f"[*] Probe Note: {reason}")
-
-    sess = manager.get_session()
-    cookie_header_len = len(sess.headers.get("Cookie", ""))
-    print(f"[*] Prepared Session Header length: {cookie_header_len} chars")
     print("==================================================")
     sys.exit(0 if is_authed else 1)

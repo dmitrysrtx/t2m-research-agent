@@ -55,11 +55,13 @@ def download_pdfs(papers_list, output_dir="articles", session=None, cookie_overr
             download_target_url = resolve_direct_pdf_url(pdf_url)
             logger.info(f"  [v] Downloading PDF: {filename}...")
             try:
-                # Use clean headers for non-IEEE targets to prevent header rejection
-                is_ieee_host = "ieee.org" in download_target_url
-                req_sess = session if is_ieee_host else requests
-                headers = {}
-                if is_ieee_host:
+                # Use session for IEEE and DOI targets to preserve cookies across redirects
+                is_ieee_or_doi = ("ieee.org" in download_target_url) or ("doi.org" in download_target_url)
+                req_sess = session if is_ieee_or_doi else requests
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+                }
+                if "ieee.org" in download_target_url:
                     headers["Referer"] = "https://ieeexplore.ieee.org/"
 
                 response = req_sess.get(download_target_url, stream=True, timeout=25, allow_redirects=True, headers=headers)

@@ -10,6 +10,17 @@ COOKIES_FILE_PATH = os.path.join(PROJECT_ROOT, "ezproxy_cookies.json")
 
 load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
 
+TRACKER_PREFIXES = (
+    "_ga", "_gid", "_gat", "_gcl", "_tt", "li_", "bcookie", "lidc",
+    "taboola", "demdex", "UserMatch", "CLID", "com.adobe", "kndctr",
+    "_fbp", "_uetsid", "_uetvid", "hum_ieee",
+)
+
+
+def _is_tracker_cookie(name: str) -> bool:
+    """Identifies third-party analytics and advertising tracker cookies."""
+    return any(name.startswith(p) for p in TRACKER_PREFIXES)
+
 
 def set_host_permissions(target_path: str) -> None:
     """Applies host user ownership and standard file permissions."""
@@ -42,27 +53,20 @@ def convert_to_ezproxy_url(url: str, ezproxy_domain: str = None) -> str:
 
 
 def load_ezproxy_cookies(valves=None, cookie_override: str = None) -> dict:
-    """Loads EZproxy/IEEE authentication cookies from parameter, Valves, .env, or disk."""
+    """Loads and sanitizes institutional session cookies from file or environment overrides."""
     cookies = {}
-    env_cookie = None
+    cookie_str = cookie_override or getattr(valves, "EZPROXY_COOKIE", None) or os.getenv("EZPROXY_COOKIE", "")
 
-    if cookie_override and cookie_override.strip():
-        env_cookie = cookie_override.strip()
-    elif valves and hasattr(valves, "EZPROXY_COOKIE") and valves.EZPROXY_COOKIE.strip():
-        env_cookie = valves.EZPROXY_COOKIE.strip()
-    else:
-        env_cookie = os.getenv("EZPROXY_COOKIE")
-
-    if env_cookie and env_cookie.strip():
-        cookie_str = env_cookie.strip()
+    if cookie_str and cookie_str.strip():
         try:
             data = json.loads(cookie_str)
             if isinstance(data, list):
                 for cookie in data:
                     if isinstance(cookie, dict) and "name" in cookie and "value" in cookie:
-                        cookies[cookie["name"]] = cookie["value"]
+                        if not _is_tracker_cookie(cookie["name"]):
+                            cookies[cookie["name"]] = cookie["value"]
             elif isinstance(data, dict):
-                cookies = {str(k): str(v) for k, v in data.items()}
+                cookies = {str(k): str(v) for k, v in data.items() if not _is_tracker_cookie(str(k))}
             if cookies:
                 return cookies
         except Exception:
@@ -73,7 +77,8 @@ def load_ezproxy_cookies(valves=None, cookie_override: str = None) -> dict:
             for p in pairs:
                 if "=" in p:
                     k, v = p.strip().split("=", 1)
-                    cookies[k] = v
+                    if k and v and not _is_tracker_cookie(k):
+                        cookies[k] = v
             if cookies:
                 return cookies
         except Exception as e:
@@ -86,9 +91,10 @@ def load_ezproxy_cookies(valves=None, cookie_override: str = None) -> dict:
                 if isinstance(data, list):
                     for cookie in data:
                         if isinstance(cookie, dict) and "name" in cookie and "value" in cookie:
-                            cookies[cookie["name"]] = cookie["value"]
+                            if not _is_tracker_cookie(cookie["name"]):
+                                cookies[cookie["name"]] = cookie["value"]
                 elif isinstance(data, dict):
-                    cookies = data
+                    cookies = {str(k): str(v) for k, v in data.items() if not _is_tracker_cookie(str(k))}
             return cookies
         except Exception as e:
             logger.error(f"[!] Error loading cookies from {COOKIES_FILE_PATH}: {e}")
@@ -104,7 +110,7 @@ def check_auth_status(valves=None, cookie_override: str = None) -> dict:
     return {"authenticated": True, "cookie_count": len(cookies), "message": f"Loaded {len(cookies)} EZproxy cookies"}
 
 
-def verify_live_ieee_access(session=None, valves=None, cookie_override: str = None, timeout: int = 6) -> tuple:
+def verify_live_ieee_access(session=None, valves=None, cookie_override: str = None, timeout: int = 8) -> tuple:
     """
     Performs a fast live probe to IEEE Xplore using session cookies.
     Returns (True, msg) on success, (False, reason) on failure.
@@ -114,18 +120,9 @@ def verify_live_ieee_access(session=None, valves=None, cookie_override: str = No
         return False, "Session cookies not found (ezproxy_cookies.json is missing or empty)."
 
     cookie_keys = set(cookies.keys())
-    if cookie_keys and any(k in cookie_keys for k in ["MRHSession", "LastMRH_Session"]):
-        try:
-            f5_s = requests.Session()
-            f5_s.headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36"
-            for k, v in cookies.items():
-                f5_s.cookies.set(k, v)
-            chk = f5_s.get("https://sso.afeka.ac.il/my.policy", verify=False, timeout=timeout, allow_redirects=False)
-            if chk.status_code in (301, 302, 303, 307) or "logout" in chk.text.lower() or "webtop" in chk.text.lower() or "vdesk" in chk.url:
-                return True, "Afeka institutional SSO session confirmed active."
-            return False, "Afeka institutional SSO session expired. Needs 2FA renewal."
-        except Exception as e:
-            return False, f"Afeka SSO connection error: {e}"
+    has_erights = any("erights" in k.lower() for k in cookie_keys)
+    if not has_erights:
+        return False, "IEEE institutional session token 'ERIGHTS' is missing. Institutional login required."
 
     if session is None:
         from src.auth.ezproxy_session import get_authenticated_session
@@ -133,17 +130,12 @@ def verify_live_ieee_access(session=None, valves=None, cookie_override: str = No
 
     probe_url = "https://ieeexplore.ieee.org/stampPDF/getPDF.jsp?tp=&arnumber=6811462"
     try:
-        # Check initial response first (fast fail if redirected to login)
         resp = session.get(probe_url, stream=True, timeout=timeout, allow_redirects=False)
-
-        has_erights = any("erights" in k.lower() for k in cookie_keys)
-        erights_hint = "" if has_erights else f" (ezproxy_cookies.json has {len(cookies)} cookies, but missing institutional token 'ERIGHTS')"
 
         if resp.status_code in (301, 302, 303, 307):
             loc = resp.headers.get("Location", "").lower()
             if any(k in loc for k in ["login", "authdecision", "-203", "wayf", "my.policy", "signin"]):
-                return False, f"Session unauthenticated (IEEE redirected to login){erights_hint}."
-            # Follow legitimate redirect (e.g. to PDF CDN)
+                return False, "Session unauthenticated (IEEE redirected to institutional login)."
             resp = session.get(resp.headers["Location"], stream=True, timeout=timeout, allow_redirects=True)
 
         content_type = resp.headers.get("Content-Type", "").lower()
@@ -155,10 +147,13 @@ def verify_live_ieee_access(session=None, valves=None, cookie_override: str = No
 
         # Detect HTML login / auth walls
         if "login" in resp.url.lower() or "authdecision" in resp.url.lower() or "html" in content_type or b"<html" in chunk.lower():
-            return False, f"Session unauthenticated (IEEE served login page){erights_hint}."
+            return False, "Session unauthenticated (IEEE served login page; institutional session expired or missing)."
 
         if resp.status_code in (401, 403):
             return False, f"HTTP {resp.status_code}: Access denied by institutional firewall."
+
+        if resp.status_code == 400:
+            return False, "HTTP 400: Request header/cookie payload too large. Cookie sanitization required."
 
         return False, f"Unexpected response status from IEEE server: HTTP {resp.status_code}."
     except requests.exceptions.Timeout:
@@ -179,7 +174,7 @@ def prompt_auth_instructions_if_needed(valves=None) -> bool:
     logger.warning(
         "⚠️ WARNING: Session file 'ezproxy_cookies.json' NOT FOUND!\n"
         "Run terminal SSO login command:\n"
-        "  python3 -m src.auth.ezproxy_session\n"
+        "  python3 -m src.auth.sso_login\n"
     )
     return False
 

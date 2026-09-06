@@ -18,17 +18,19 @@ def setup_logger(log_file=DEFAULT_LOG_PATH):
         # Formatter for the log messages
         formatter = logging.Formatter('%(asctime)s | %(levelname)-7s | %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
         
-        # File Handler (append mode)
-        file_handler = logging.FileHandler(log_file, mode='a', encoding='utf-8')
-        file_handler.setFormatter(formatter)
+        # File Handler (append mode with graceful error handling)
+        try:
+            file_handler = logging.FileHandler(log_file, mode='a', encoding='utf-8')
+            file_handler.setFormatter(formatter)
+            logger.addHandler(file_handler)
+        except Exception:
+            pass
         
         # Console Handler
         console_handler = logging.StreamHandler(sys.stdout)
         # Simplified formatter for console to keep it clean like before
         console_formatter = logging.Formatter('%(message)s')
         console_handler.setFormatter(console_formatter)
-        
-        logger.addHandler(file_handler)
         logger.addHandler(console_handler)
         
     return logger

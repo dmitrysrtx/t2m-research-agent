@@ -50,6 +50,15 @@ t2m-research-agent/
 
 ## Architectural Decision Log
 
+### 2026-09-05: IEEE Xplore / Afeka College Institutional SSO Refactor & Cookie Sanitization
+- **Goal**: Resolve authentication flow failure, fix Playwright selector deadlock, eliminate synchronous form submit blocking, and prevent HTTP 400 Bad Request caused by cookie bloat.
+- **Root Causes & Solutions**:
+  1. **Direct WAYF OpenAthens Navigation**: Added direct navigation to `AFEKA_WAYF_URL` (`https://ieeexplore.ieee.org/servlet/wayf.jsp?entityId=https://idp.afeka.ac.il/openathens...`) with resilient fallback to modal typeahead discovery, avoiding brittle Angular UI hierarchies.
+  2. **Playwright Form Submission Deadlock**: Replaced blocking `submit.click()` with `no_wait_after=True` and prompt-first notification so the user receives the 2FA push instruction immediately while the browser awaits SAML return (`page.wait_for_url("**/ieeexplore.ieee.org/**")`).
+  3. **Cookie Sanitization & CloudFront 400 Fix**: Stripped 3rd-party tracking cookies (Taboola, LinkedIn, TikTok, Adobe, GA) and eliminated duplicate cookie injection on both `.ieee.org` and `ieeexplore.ieee.org`, keeping request headers lean and preventing CloudFront `HTTP 400 Bad Request`.
+  4. **Headless Browser Dependencies**: Verified and installed required Linux shared libraries (`libatk-1.0`, `libcups2`, `libgbm1`, etc.) for Playwright Chromium.
+  5. **Modular Code Architecture**: Maintained all modules in `src/auth/` under 200 lines with standalone `__main__` diagnostics.
+
 ### 2026-09-05: Single Source of Truth (SSOT) Configuration Consolidation
 - **Goal**: Eliminate hardcoded fallbacks and duplicate configuration across modules (`main.py`, `openwebui/t2m_pipeline.py`, `src/core/pipeline_runner.py`, `src/fetchers/`), making `config.py` the authoritative Single Source of Truth.
 - **Key Changes**:
@@ -101,7 +110,8 @@ t2m-research-agent/
   2. **Session Cookie Header Poisoning in `ezproxy_session.py`**: Removed `session.headers["Cookie"] = "; ".join(...)` which sent hardcoded IEEE cookies to foreign domains (ArXiv, CrossRef, DOI resolvers). Restricted cookies to `.ieee.org` in `session.cookies` without duplicate sub-domain binding.
   3. **Multi-Source ArXiv / OpenAccess Resolution in `pdf_downloader.py`**: Added `resolve_direct_pdf_url()` to transform ArXiv abstract URLs (`arxiv.org/abs/...`) to direct binary endpoints (`arxiv.org/pdf/...pdf`), added ArXiv link detection in landing page HTML, added `Referer` headers for IEEE requests, and decoupled requests for non-IEEE sources. Verified direct PDF downloads for ArXiv papers.
   4. **Diagnostic Transparency & Fast Probe Optimization**: In `src/auth/ezproxy_auth.py`, updated `verify_live_ieee_access()` with `allow_redirects=False` for sub-second fail-fast probe checks, and enhanced diagnostic messages to explicitly report when `ezproxy_cookies.json` was parsed successfully but lacks the institutional `ERIGHTS` token.
-  5. **Direct F5 APM 2FA Mobile Push Restoration**: Restored the direct F5 APM authentication engine in `src/auth/sso_login.py` (`https://sso.afeka.ac.il/my.policy`). When unauthenticated, the pipeline automatically submits credentials to Afeka's F5 gateway, triggering an authentic 2FA mobile push notification to the user's phone, polling until fingerprint approval is granted, and saving the session cookies. Updated `src/auth/ezproxy_auth.py` to live-validate F5 APM sessions and `ezproxy_session.py` to route session cookies appropriately.
+  5. **IEEE SAML Federated Institutional Authentication Flow (`sso_login.py`)**: Completely refactored the institutional authentication engine in `src/auth/sso_login.py`. Rather than authenticating directly against Afeka (`sso.afeka.ac.il/my.policy`) which only yielded internal IdP cookies (`MRHSession`), the automation begins at `https://ieeexplore.ieee.org`, triggers "Institutional Sign In" -> "Access Through Your Institution", searches for "Afeka College", and redirects into Afeka's SAML IdP with the IEEE authentication request. Once credentials are submitted and the user approves the 2FA push on their mobile phone, the browser completes the SAML callback to IEEE Xplore, acquiring the authentic institutional entitlement token (`ERIGHTS`). All cookies are dumped into `ezproxy_cookies.json`.
+  6. **PDF Downloader Session & User-Agent Preservation**: Updated `src/utils/pdf_downloader.py` to route DOI links through `session` so that redirects to `ieeexplore.ieee.org` preserve institutional cookies and browser User-Agent headers, preventing HTTP 420 rate-limiting and paywall re-routing.
 
 ## Key Workflows & Execution Modes
 

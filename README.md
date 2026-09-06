@@ -108,11 +108,11 @@ The framework consolidates institutional authentication and token preservation i
 
 1. **Preemptive Live Probe (`EZProxyManager`):**
    Before querying academic search APIs or calling AI sub-agents, `EZProxyManager` executes a lightweight 1-second live probe to IEEE Xplore to verify full-text download entitlement.
-2. **In-Process Automated 2FA SSO:**
+2. **IEEE SAML Federated 2FA SSO:**
    If institutional cookies are missing or expired:
-   - Type `/login` in OpenWebUI (or submit a research query with `AUTO_SSO_LOGIN=True`).
-   - The browser flow navigates to IEEE Xplore via Afeka College SSO and sends a 2FA push notification to your phone.
-   - Simply approve with your fingerprint. The manager captures new session cookies and resumes execution.
+   - Type `/login` in OpenWebUI (or run with `AUTO_SSO_LOGIN=True`).
+   - The browser flow navigates to IEEE Xplore (`ieeexplore.ieee.org`), clicks **Institutional Sign In** -> **Access Through Your Institution**, selects **Afeka College**, fills credentials, and triggers an authentic 2FA push notification to your phone.
+   - Simply approve with your fingerprint. The SAML callback redirects back to IEEE Xplore, captures the institutional entitlement token (`ERIGHTS`), and resumes pipeline execution.
 3. **Fail-Fast Token Preservation:**
    If access is unauthenticated or push is not approved, execution halts immediately (**0 LLM tokens spent**) and returns clear resolution steps.
 4. **Standalone CLI Diagnostics:**
@@ -124,8 +124,8 @@ The framework consolidates institutional authentication and token preservation i
    # Run direct IEEE live probe
    python3 -m src.auth.ezproxy_auth
 
-   # Trigger automated 2FA login directly
-   python3 -m src.auth.afeka_sso
+   # Trigger IEEE -> Afeka 2FA login directly
+   python3 -m src.auth.sso_login
    ```
 
 ---
