@@ -111,6 +111,7 @@ class Pipeline:
             import src.core.pipeline_runner
             import src.agents.sub_agents
             import src.agents.orchestrator
+            import src.telemetry
 
             importlib.reload(config)
             importlib.reload(src.auth.ezproxy_auth)
@@ -118,6 +119,7 @@ class Pipeline:
             importlib.reload(src.auth.afeka_sso)
             importlib.reload(src.auth.sso_login)
             importlib.reload(src.fetchers.citation_enricher)
+            importlib.reload(src.telemetry)
             importlib.reload(src.agents.sub_agents)
             importlib.reload(src.agents.orchestrator)
             importlib.reload(src.core.pipeline_runner)
@@ -174,6 +176,41 @@ class Pipeline:
         auto_sso = config.AUTO_SSO_LOGIN_DEFAULT if self.valves.AUTO_SSO_LOGIN is None else self.valves.AUTO_SSO_LOGIN
 
         msg_queue = queue.Queue()
+        sse_sink = src.telemetry.SSEHandler()
+
+        class OpenWebUIAdapterSink(src.telemetry.BaseHandler):
+            def handle(self, event):
+                etype = event.event_type
+                src_name = event.source
+                payload = event.payload or {}
+                if etype == "THINKING":
+                    t = payload.get("thought") or payload.get("message")
+                    if t:
+                        msg_queue.put(f"🤔 *[{src_name}]* {t}")
+                elif etype == "TOOL_CALL":
+                    tool = payload.get("tool", "tool")
+                    args = payload.get("args") or payload.get("query", "")
+                    msg_queue.put(f"🔍 *[{src_name}]* Calling `{tool}` ({args})")
+                elif etype == "TOOL_RESULT":
+                    tool = payload.get("tool", "tool")
+                    res = payload.get("result", "Done")
+                    dur = payload.get("duration")
+                    dur_s = f" ({dur:.2f}s)" if dur is not None else ""
+                    msg_queue.put(f"✅ *[{src_name}]* `{tool}` -> {res}{dur_s}")
+                elif etype == "ERROR":
+                    err = payload.get("error", "Error")
+                    msg_queue.put(f"❌ *[{src_name}]* {err}")
+
+        # Dispatcher with UI adapter, SSE sink, Terminal sink, and Langfuse sink
+        pipe_tm = src.telemetry.TelemetryManager([OpenWebUIAdapterSink(), sse_sink])
+        if getattr(config, "ENABLE_CLI_LOGS", True):
+            pipe_tm.register_handler(src.telemetry.TerminalHandler())
+        if getattr(config, "LANGFUSE_PUBLIC_KEY", ""):
+            pipe_tm.register_handler(src.telemetry.LangfuseHandler(
+                host=getattr(config, "LANGFUSE_HOST", "http://192.168.68.53:3005"),
+                public_key=getattr(config, "LANGFUSE_PUBLIC_KEY", ""),
+                secret_key=getattr(config, "LANGFUSE_SECRET_KEY", ""),
+            ))
 
         def cb(m: str):
             msg_queue.put(m)
@@ -197,6 +234,7 @@ class Pipeline:
                     save_output_file=True,
                     auto_sso_login=auto_sso,
                     status_callback=cb,
+                    telemetry=pipe_tm,
                 )
                 msg_queue.put(("RESULT", res))
             except Exception as e:

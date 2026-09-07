@@ -56,9 +56,18 @@ t2m-research-agent/
 │   ├── agents/                   # LLM SYNTHESIS AGENTS
 │   │   ├── orchestrator.py       # Master Orchestrator LLM Agent
 │   │   └── sub_agents.py         # Specialized Domain Sub-Agents
+│   ├── telemetry/                # DECOUPLED TELEMETRY & EVENT DISPATCHER
+│   │   ├── __init__.py           # Facade & get_telemetry() factory
+│   │   ├── events.py             # EventType enum & TelemetryEvent dataclass
+│   │   ├── manager.py            # Central TelemetryManager (Event Dispatcher)
+│   │   └── handlers/             # Modular sinks (Terminal, Langfuse v3, SSE)
+│   │       ├── base.py           # BaseHandler interface
+│   │       ├── terminal.py       # Rich 1-line progress CLI handler
+│   │       ├── langfuse_sink.py  # Langfuse v3 background sink (silent stdout)
+│   │       └── sse.py            # Server-Sent Events queue & stream generator
 │   ├── utils/                    # CROSS-CUTTING UTILITIES
 │   │   ├── pdf_downloader.py     # PDF Downloader with Authenticated Sessions
-│   │   └── logger.py             # System Logger
+│   │   └── logger.py             # System Logger (file-only)
 │   └── core/
 │       └── pipeline_runner.py    # Central pipeline execution engine
 ├── openwebui/                    # OPEN WEBUI INTEGRATION LAYER
@@ -99,6 +108,9 @@ cp .env.example .env
 - `DEFAULT_OUTPUT_FILE`: Master report path (defaults to `LITERATURE_REVIEW.md`).
 - `IEEE_INSTITUTION`, `IEEE_USERNAME`, `IEEE_PASSWORD`: Institutional credentials for automated 2FA login.
 - `EZPROXY_DOMAIN`, `AUTO_SSO_LOGIN`: EZproxy host and auto-login flag.
+- `LANGFUSE_HOST`: Langfuse v3 self-hosted instance endpoint (defaults to `http://192.168.68.53:3005`).
+- `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`: Telemetry project credentials.
+- `ENABLE_CLI_LOGS`: Toggle clean terminal progress output (`True` / `False`).
 
 ---
 
@@ -129,6 +141,29 @@ The framework consolidates institutional authentication and token preservation i
    ```
 
 ---
+
+## 📡 Decoupled Telemetry & Observability (`src/telemetry/`)
+
+The framework implements the **Event Dispatcher Pattern** via `TelemetryManager`, cleanly decoupling core agent execution from logging and output sinks:
+
+1. **Unified Event Protocol (`src/telemetry/events.py`):**
+   Standardized events (`THINKING`, `TOOL_CALL`, `TOOL_RESULT`, `ERROR`, `RESPONSE`) carrying source metadata, timings, and structured payloads.
+2. **Terminal Progress Sink (`TerminalHandler`):**
+   Utilizes `rich` to print clean, informative 1-line progress updates. Eliminates raw JSON dumps, ANSI clobbering, and duplicate trace spam.
+3. **Langfuse v3 Asynchronous Sink (`LangfuseHandler`):**
+   Connects to your self-hosted Langfuse v3 dashboard (`http://192.168.68.53:3005`) via background queue. Runs completely silently (**zero stdout pollution**) and gracefully degrades if credentials are unconfigured or the server is offline.
+4. **Server-Sent Events Sink (`SSEHandler`):**
+   Thread-safe queue converting agent telemetry into standard SSE streams (`data: {"type": "...", "content": "..."}\n\n`) with `data: [DONE]\n\n` termination for OpenWebUI and FastAPI integration.
+5. **Standalone Diagnostics:**
+   ```bash
+   python3 -m src.telemetry.manager
+   python3 -m src.telemetry.handlers.terminal
+   python3 -m src.telemetry.handlers.sse
+   python3 -m src.telemetry.handlers.langfuse_sink
+   ```
+
+---
+
 
 ## 🚀 Running the Framework
 

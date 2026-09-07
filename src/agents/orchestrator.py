@@ -21,7 +21,7 @@ Include the following sections:
 Ensure the text is strictly academic, highly readable, and formatted in Markdown.
 """
 
-def synthesize_literature_review(kinematic_res, physics_diff_res, rl_res, pose_res, custom_prompt=None):
+def synthesize_literature_review(kinematic_res, physics_diff_res, rl_res, pose_res, custom_prompt=None, telemetry=None):
     """Passes all sub-agent outputs to the Orchestrator for final compilation."""
     
     prompt = f"""
@@ -45,4 +45,5 @@ Here are the analysis results from the 4 domain experts. Please synthesize them 
 ---
 """
     system_prompt = custom_prompt or ORCHESTRATOR_SYSTEM_PROMPT
-    return run_agent(system_prompt, prompt)
+    return run_agent(system_prompt, prompt, agent_name="orchestrator", telemetry=telemetry)
+

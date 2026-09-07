@@ -43,12 +43,33 @@ t2m-research-agent/
     │   └── sub_agents.py       # Domain expert sub-agents (Kinematic, Physics, RL, Pose)
     ├── core/                   # Layer 4: Pipeline Execution Engine
     │   └── pipeline_runner.py  # High-level pipeline coordinator & review assembler
-    └── utils/                  # Layer 5: Cross-Cutting Utilities
-        ├── logger.py           # Logging utility
+    ├── telemetry/              # Layer 5: Decoupled Telemetry & Event Dispatcher
+    │   ├── __init__.py         # Package exports & get_telemetry() factory
+    │   ├── events.py           # EventType enum & TelemetryEvent data model
+    │   ├── manager.py          # Central TelemetryManager (Event Dispatcher)
+    │   └── handlers/           # Modular telemetry sinks
+    │       ├── __init__.py     # Handler exports
+    │       ├── base.py         # BaseHandler abstract sink interface
+    │       ├── terminal.py     # TerminalHandler (rich 1-line progress, zero raw JSON)
+    │       ├── langfuse_sink.py# LangfuseHandler (v3 SDK, background thread, no stdout)
+    │       └── sse.py          # SSEHandler (thread-safe Queue & SSE stream generator)
+    └── utils/                  # Layer 6: Cross-Cutting Utilities
+        ├── logger.py           # Logging utility (file-only)
         └── pdf_downloader.py   # PDF downloader engine using authenticated sessions
 ```
 
 ## Architectural Decision Log
+
+### 2026-09-06: Decoupled Telemetry Architecture (Event Dispatcher, Rich Terminal, Langfuse v3, SSE)
+- **Goal**: Decouple core agent execution from logging and output handlers following the Event Dispatcher Pattern, eliminate raw JSON terminal clutter, silence background tracing, and provide SSE streaming.
+- **Key Changes**:
+  1. **Event Dispatcher (`src/telemetry/`):** Created `TelemetryManager` and unified `TelemetryEvent` contract (`THINKING`, `TOOL_CALL`, `TOOL_RESULT`, `ERROR`, `RESPONSE`).
+  2. **Rich 1-Line Progress Terminal Sink (`TerminalHandler`):** Replaced verbose multi-line stdout dumps with clean, color-coded, 1-line status updates using `rich`. Completely eliminated raw JSON and duplicate line dumps.
+  3. **Langfuse v3 SDK Asynchronous Sink (`LangfuseHandler`):** Integrated background event dispatching to self-hosted Langfuse v3 (`http://192.168.68.53:3005`). Silenced `langfuse` logger (`logging.CRITICAL`, non-propagating) to guarantee zero stdout pollution. Handled missing keys and connection timeouts gracefully without blocking the agent.
+  4. **Server-Sent Events Sink (`SSEHandler`):** Created thread-safe queue generating compliant SSE streams (`data: {...}\n\n`) ending with `data: [DONE]\n\n` for OpenWebUI and FastAPI integration.
+  5. **Core Engine Instrumentation:** Updated `pipeline_runner.py`, `sub_agents.py`, and `orchestrator.py` to emit structured events instead of direct `print` calls.
+  6. **Clean Logging:** Configured `logger.py` to write strictly to `research_agent.log`, preventing duplicate trace messages in terminal.
+  7. **OpenWebUI Pipeline Integration:** Integrated `OpenWebUIAdapterSink` and `SSEHandler` into `openwebui/t2m_pipeline.py` with dynamic hot-reloading.
 
 ### 2026-09-05: IEEE Xplore / Afeka College Institutional SSO Refactor & Cookie Sanitization
 - **Goal**: Resolve authentication flow failure, fix Playwright selector deadlock, eliminate synchronous form submit blocking, and prevent HTTP 400 Bad Request caused by cookie bloat.

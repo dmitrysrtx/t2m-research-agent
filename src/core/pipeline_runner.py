@@ -2,9 +2,11 @@ import os
 import sys
 import re
 import time
+from typing import Optional
 from datetime import datetime
 import agent_config as config
 from src.utils.logger import logger
+from src.telemetry import get_telemetry, TelemetryManager
 from src.fetchers.ieee_fetcher import fetch_ieee_papers
 from src.fetchers.arxiv_fetcher import fetch_arxiv_papers
 from src.fetchers.semantic_scholar_fetcher import fetch_semantic_scholar_papers
@@ -119,46 +121,50 @@ def execute_t2m_research(
     auto_sso_login: bool = config.AUTO_SSO_LOGIN_DEFAULT,
     status_callback: callable = None,
     output_filename: str = config.DEFAULT_OUTPUT_FILE,
+    telemetry: Optional[TelemetryManager] = None,
 ) -> str:
     """
     Central core execution engine for T2M Research Agent.
     Used by both CLI (main.py) and Open WebUI Pipeline (t2m_pipeline.py).
-    Strictly adheres to active fetcher flags.
-    Supports automated mobile push SSO authentication and real-time status callbacks.
+    Decoupled using TelemetryManager for clean Terminal, Langfuse v3, and SSE streaming.
     Enforces strict Fail-Fast token preservation if institutional access is required but unauthenticated.
     """
+    tm = telemetry or get_telemetry()
     clean_query = extract_core_keywords(query)
 
-    logger.info("==================================================")
-    logger.info("🚀 Starting T2M Research Framework Engine")
-    logger.info(f"[*] Raw Prompt Length: {len(query)} chars")
-    logger.info(f"[*] Extracted Search Query: '{clean_query}'")
-    logger.info(f"[*] Active Fetchers -> IEEE: {enable_ieee} | ArXiv: {enable_arxiv} | Scholar: {enable_scholar} | Semantic Scholar: {enable_semantic_scholar}")
-    logger.info("==================================================\n")
+    def _notify(msg: str):
+        if status_callback:
+            try:
+                status_callback(msg)
+            except Exception:
+                pass
+
+    tm.thinking(
+        f"Starting T2M research pipeline for query: '{clean_query}' (Raw query: {len(query)} chars)",
+        source="pipeline_runner"
+    )
 
     if ezproxy_cookie.strip():
         os.environ["EZPROXY_COOKIE"] = ezproxy_cookie.strip()
-        logger.info("[*] Using EZproxy cookie provided via Valves configuration.")
+        tm.tool_result("config", "Using EZproxy cookie provided via Valves", source="auth")
 
     manager = EZProxyManager(cookie_override=ezproxy_cookie)
 
     # 🛡️ LIVE HEALTH-CHECK & AUTOMATED SSO FALLBACK:
     if enable_ieee:
-        logger.info("[*] Performing Live Health-Check on IEEE institutional access...")
-        if status_callback:
-            status_callback("🔍 Verifying IEEE institutional access...")
+        tm.tool_call("verify_live_ieee_access", args={"institution": config.IEEE_INSTITUTION_DEFAULT}, source="auth")
+        _notify("🔍 Verifying IEEE institutional access...")
 
         is_authed, reason = manager.ensure_valid_session(
             auto_login=auto_sso_login,
-            status_callback=status_callback,
+            status_callback=_notify,
         )
 
         if not is_authed:
-            logger.warning(f"🛑 [FAIL-FAST] IEEE Authentication check failed: {reason}")
-            logger.warning("🛑 Halting execution to preserve search quotas and LLM tokens.\n")
+            tm.error(f"IEEE Authentication check failed: {reason}", source="auth")
             return build_auth_required_message(reason, query=query)
 
-        logger.info(f"✅ [HEALTH-CHECK OK] {reason}\n")
+        tm.tool_result("verify_live_ieee_access", result=reason, source="auth")
     elif enable_scholar or enable_semantic_scholar:
         prompt_auth_instructions_if_needed()
 
@@ -211,7 +217,9 @@ def execute_t2m_research(
                 
         return papers[:max_results_per_domain]
 
-    logger.info("[1/4] Fetching papers across selected sources...")
+    _notify("[1/4] Fetching papers across selected sources...")
+    tm.tool_call("fetch_papers", args=f"Domains: {list(domains.keys())}", source="fetcher")
+    
     kinematic_papers = fetch_papers_for_domain("kinematic")
     physics_papers = fetch_papers_for_domain("physics")
     rl_papers = fetch_papers_for_domain("rl")
@@ -227,36 +235,40 @@ def execute_t2m_research(
             seen_keys.add(paper_key)
             unique_papers.append(p)
 
-    logger.info(f"\n[*] Analytics: Fetched {len(all_papers_raw)} total hits across enabled fetchers.")
-    logger.info(f"[*] Deduped: Found {len(unique_papers)} UNIQUE papers across all domains.")
+    tm.tool_result("fetch_papers", result=f"Fetched {len(all_papers_raw)} hits ({len(unique_papers)} unique papers)", source="fetcher")
 
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     articles_dir = os.path.join(project_root, "articles")
 
     # 2. DOWNLOAD PDFs
-    logger.info("\n[2/4] Downloading UNIQUE PDFs for Deep RAG ingestion...")
+    _notify("[2/4] Downloading UNIQUE PDFs for Deep RAG ingestion...")
+    tm.tool_call("download_pdfs", args=f"{len(unique_papers)} papers target", source="pdf_downloader")
     download_count = download_pdfs(
         unique_papers,
         output_dir=articles_dir,
         session=manager.get_session(),
         cookie_override=ezproxy_cookie
     )
+    tm.tool_result("download_pdfs", result=f"Downloaded {download_count} PDFs", source="pdf_downloader")
 
     # 3. SUB-AGENTS ANALYSIS
-    logger.info("\n[3/4] Engaging AI Expert Sub-Agents...")
-    kinematic_result = analyze_kinematic(kinematic_papers, custom_prompt=kinematic_prompt)
-    physics_result = analyze_physics_diffusion(physics_papers, custom_prompt=physics_prompt)
-    rl_result = analyze_rl_control(rl_papers, custom_prompt=rl_prompt)
-    pose_result = analyze_pose_vision(pose_papers, custom_prompt=pose_prompt)
+    _notify("[3/4] Engaging AI Expert Sub-Agents...")
+    tm.thinking("Engaging AI Expert Sub-Agents across 4 domains", source="orchestrator")
+    kinematic_result = analyze_kinematic(kinematic_papers, custom_prompt=kinematic_prompt, telemetry=tm)
+    physics_result = analyze_physics_diffusion(physics_papers, custom_prompt=physics_prompt, telemetry=tm)
+    rl_result = analyze_rl_control(rl_papers, custom_prompt=rl_prompt, telemetry=tm)
+    pose_result = analyze_pose_vision(pose_papers, custom_prompt=pose_prompt, telemetry=tm)
 
     # 4. MASTER ORCHESTRATOR SYNTHESIS
-    logger.info("\n[4/4] Engaging Master Orchestrator for literature synthesis...")
+    _notify("[4/4] Engaging Master Orchestrator for literature synthesis...")
+    tm.thinking("Synthesizing master literature review chapter", source="orchestrator")
     final_review = synthesize_literature_review(
         kinematic_result,
         physics_result,
         rl_result,
         pose_result,
-        custom_prompt=orchestrator_prompt
+        custom_prompt=orchestrator_prompt,
+        telemetry=tm
     )
 
     # Build response for Open WebUI & File Saving
@@ -279,11 +291,12 @@ def execute_t2m_research(
         f"{final_review}"
     )
 
-    # 4. ACADEMIC CREDIBILITY & PEER-REVIEW ENRICHMENT
+    # 5. ACADEMIC CREDIBILITY & PEER-REVIEW ENRICHMENT
     if unique_papers:
-        if status_callback:
-            status_callback("📊 Enriching review with CrossRef and ArXiv peer-review verification...")
+        _notify("📊 Enriching review with CrossRef and ArXiv peer-review verification...")
+        tm.tool_call("enrich_literature_review", args=f"{len(unique_papers)} papers", source="enricher")
         summary_header = enrich_literature_review(summary_header, papers=unique_papers)
+        tm.tool_result("enrich_literature_review", result="Citations verified", source="enricher")
 
     if save_output_file:
         output_path = os.path.join(project_root, output_filename)
@@ -301,10 +314,12 @@ def execute_t2m_research(
                 os.chmod(output_path, 0o666)
             except Exception:
                 pass
-            logger.info(f"✅ Review file saved to: {output_path}")
+            tm.tool_result("save_output_file", result=f"Report saved to {output_filename}", source="pipeline_runner")
         except Exception as e:
-            logger.error(f"[!] Failed to write review file {output_path}: {e}")
+            tm.error(f"Failed to write review file {output_path}: {e}", source="pipeline_runner")
 
+    tm.response(f"Research synthesis completed ({len(summary_header)} chars)", source="pipeline_runner")
+    tm.close()
     return summary_header
 
 

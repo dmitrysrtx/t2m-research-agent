@@ -25,14 +25,7 @@ def setup_logger(log_file=DEFAULT_LOG_PATH):
             logger.addHandler(file_handler)
         except Exception:
             pass
-        
-        # Console Handler
-        console_handler = logging.StreamHandler(sys.stdout)
-        # Simplified formatter for console to keep it clean like before
-        console_formatter = logging.Formatter('%(message)s')
-        console_handler.setFormatter(console_formatter)
-        logger.addHandler(console_handler)
-        
+            
     return logger
 
 # Create a global logger instance

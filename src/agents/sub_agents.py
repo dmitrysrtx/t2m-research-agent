@@ -7,15 +7,23 @@ if ROOT_DIR not in sys.path:
 
 from agent_config import API_KEY, BASE_URL, MODEL_NAME
 
+import time
+from src.telemetry import get_telemetry
+
 client = OpenAI(
     base_url=BASE_URL,
     api_key=API_KEY,
 )
 
-def run_agent(system_prompt, user_prompt):
+def run_agent(system_prompt, user_prompt, agent_name="sub_agent", telemetry=None):
+    tm = telemetry or get_telemetry()
     if not API_KEY or API_KEY == "your_api_key_here":
-        return "[!] API Key is missing. Please configure the .env file."
+        err = "API Key is missing. Please configure the .env file."
+        tm.error(err, source=agent_name)
+        return f"[!] {err}"
         
+    start_t = time.time()
+    tm.thinking(f"Analyzing prompt with {MODEL_NAME}...", source=agent_name)
     try:
         response = client.chat.completions.create(
             model=MODEL_NAME,
@@ -25,8 +33,19 @@ def run_agent(system_prompt, user_prompt):
             ],
             temperature=0.2
         )
-        return response.choices[0].message.content
+        content = response.choices[0].message.content
+        duration = time.time() - start_t
+        usage = getattr(response, "usage", None)
+        total_tokens = getattr(usage, "total_tokens", None) if usage else None
+        tm.response(
+            content=f"Generated {len(content)} chars in {duration:.2f}s",
+            tokens=total_tokens,
+            source=agent_name
+        )
+        return content
     except Exception as e:
+        duration = time.time() - start_t
+        tm.error(f"Execution error: {str(e)}", source=agent_name, duration=duration)
         return f"[!] Agent Error: {str(e)}"
 
 def format_papers_for_prompt(papers_data):
@@ -82,25 +101,26 @@ Columns: | Paper Title & Year | Citations | Impact Factor | Code Repository (Git
 Limit response to ONLY the table.""" + ANTI_LAZY_RULE
 
 
-def analyze_kinematic(papers_data, custom_prompt=None):
+def analyze_kinematic(papers_data, custom_prompt=None, telemetry=None):
     if not papers_data: return "No kinematic papers found."
     prompt = custom_prompt or KINEMATIC_SYSTEM_PROMPT
-    return run_agent(prompt, format_papers_for_prompt(papers_data))
+    return run_agent(prompt, format_papers_for_prompt(papers_data), agent_name="sub_agent:kinematic", telemetry=telemetry)
 
-def analyze_physics_diffusion(papers_data, custom_prompt=None):
+def analyze_physics_diffusion(papers_data, custom_prompt=None, telemetry=None):
     if not papers_data: return "No physics/diffusion papers found."
     prompt = custom_prompt or PHYSICS_DIFFUSION_SYSTEM_PROMPT
-    return run_agent(prompt, format_papers_for_prompt(papers_data))
+    return run_agent(prompt, format_papers_for_prompt(papers_data), agent_name="sub_agent:physics", telemetry=telemetry)
 
-def analyze_rl_control(papers_data, custom_prompt=None):
+def analyze_rl_control(papers_data, custom_prompt=None, telemetry=None):
     if not papers_data: return "No RL papers found."
     prompt = custom_prompt or RL_CONTROL_SYSTEM_PROMPT
-    return run_agent(prompt, format_papers_for_prompt(papers_data))
+    return run_agent(prompt, format_papers_for_prompt(papers_data), agent_name="sub_agent:rl", telemetry=telemetry)
 
-def analyze_pose_vision(papers_data, custom_prompt=None):
+def analyze_pose_vision(papers_data, custom_prompt=None, telemetry=None):
     if not papers_data: return "No Pose/Vision papers found."
     prompt = custom_prompt or MEDIAPIPE_POSE_SYSTEM_PROMPT
-    return run_agent(prompt, format_papers_for_prompt(papers_data))
+    return run_agent(prompt, format_papers_for_prompt(papers_data), agent_name="sub_agent:pose", telemetry=telemetry)
+
 
 
 if __name__ == "__main__":

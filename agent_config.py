@@ -32,6 +32,14 @@ EZPROXY_DOMAIN_DEFAULT = os.getenv("EZPROXY_DOMAIN", "ezproxy.afeka.ac.il")
 AUTO_SSO_LOGIN_DEFAULT = os.getenv("AUTO_SSO_LOGIN", "True").lower() == "true"
 IEEE_INSTITUTION_DEFAULT = os.getenv("IEEE_INSTITUTION", "afeka")
 
+# ==============================================================================
+# Telemetry & Observability (Langfuse v3, SSE, Terminal)
+# ==============================================================================
+LANGFUSE_HOST = os.getenv("LANGFUSE_HOST", "http://192.168.68.53:3005")
+LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY", "")
+LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY", "")
+ENABLE_CLI_LOGS = os.getenv("ENABLE_CLI_LOGS", "True").lower() == "true"
+
 
 if __name__ == "__main__":
     print("==================================================")
@@ -46,4 +54,6 @@ if __name__ == "__main__":
     print(f"[*] Output Report: {DEFAULT_OUTPUT_FILE}")
     print(f"[*] Institution: {IEEE_INSTITUTION_DEFAULT} ({EZPROXY_DOMAIN_DEFAULT})")
     print(f"[*] Auto 2FA SSO: {AUTO_SSO_LOGIN_DEFAULT}")
+    print(f"[*] CLI Logs: {ENABLE_CLI_LOGS}")
+    print(f"[*] Langfuse Host: {LANGFUSE_HOST} (Active: {'Yes' if LANGFUSE_PUBLIC_KEY else 'No'})")
     print("==================================================")
