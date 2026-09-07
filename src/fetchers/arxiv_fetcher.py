@@ -23,14 +23,21 @@ def fetch_arxiv_papers(query=config.DEFAULT_SEARCH_QUERY, max_results=config.MAX
             published = entry.find('{http://www.w3.org/2005/Atom}published').text
             paper_url = entry.find('{http://www.w3.org/2005/Atom}id').text
             
+            comment_elem = entry.find('{http://arxiv.org/schemas/atom}comment')
+            comment_text = comment_elem.text.strip() if comment_elem is not None and comment_elem.text else ""
+            
             pdf_url = paper_url.replace('/abs/', '/pdf/') + ".pdf"
+            from src.fetchers.github_finder import extract_github_url
+            gh_url = extract_github_url(f"{comment_text} {summary}")
             
             papers.append({
                 "title": title.strip(),
                 "year": published.split('-')[0],
                 "abstract": summary.strip(),
+                "comment": comment_text,
                 "url": paper_url.strip(),
                 "pdf_url": pdf_url.strip(),
+                "github_url": gh_url or "N/A",
                 "source": "ArXiv"
             })
     except Exception as e:

@@ -19,11 +19,13 @@ Includes multi-fetcher academic search across **Google Scholar**, **IEEE Xplore*
      - `LITERATURE_REVIEW.md` (root directory)
    - Downloaded full-text PDF articles are stored cleanly in `articles/*.pdf`.
 
-3. **Enhanced Paper Metadata & Comparative Tables:**
-   Every processed paper extracts and synthesizes 3 crucial metadata dimensions:
-   - **Citations:** Real-time citation count from academic APIs.
-   - **Impact Factor / Venue Rank:** Venue classification (e.g. `CVPR (Top-tier IEEE/CVF)`, `Q1 / High Impact`).
-   - **Code Repository (GitHub):** Open-source code repository URL (or `N/A` if not published).
+3. **Multi-Tier GitHub Code Repository Discovery Engine:**
+   Automatically resolves and verifies open-source code repositories across all processed papers:
+   - **Tier 1 (Abstract & Metadata Regex):** Extracts `github.com/owner/repo` and `owner.github.io/repo` from abstract text and ArXiv `<arxiv:comment>` fields.
+   - **Tier 2 (Landing Page HTML Inspection):** Scans download landing pages (ArXiv, OpenAlex, publisher portals) during PDF acquisition.
+   - **Tier 3 (Targeted Search Fallback):** Queries GitHub Search API for paper titles with rate-limit protection.
+   - **Canonicalization:** Cleans trailing punctuation, strips branches/tree subpaths, and filters service URLs.
+   - **Table Integration:** Populates clickable Markdown hyperlinks into intermediate Sub-Agent tables, Master Review chapter, and Academic Credibility verification table.
 
 4. **Multi-Agent RAG Pipeline:**
    - **AI Sub-Agents:** *Kinematic Models, Physics & Diffusion, RL Character Control, 3D Pose Vision*.
@@ -47,11 +49,12 @@ t2m-research-agent/
 │   │   ├── import_cookies.py     # Interactive CLI Cookie Importer
 │   │   ├── playwright_login.py   # Automated login compatibility wrapper
 │   │   └── sso_login.py          # Direct SSO Authentication Runner
-│   ├── fetchers/                 # ACADEMIC SEARCH ENGINES
+│   ├── fetchers/                 # ACADEMIC SEARCH ENGINES & ENRICHMENT
 │   │   ├── scholar_fetcher.py    # Google Scholar Index Fetcher
 │   │   ├── ieee_fetcher.py       # IEEE Xplore & OpenAlex Metadata Search
 │   │   ├── arxiv_fetcher.py      # ArXiv Preprint Fetcher
 │   │   ├── semantic_scholar_fetcher.py # Semantic Scholar API
+│   │   ├── github_finder.py      # Multi-Tier GitHub Code Repository Discovery
 │   │   └── citation_enricher.py  # CrossRef & ArXiv Academic Credibility Enricher
 │   ├── agents/                   # LLM SYNTHESIS AGENTS
 │   │   ├── orchestrator.py       # Master Orchestrator LLM Agent

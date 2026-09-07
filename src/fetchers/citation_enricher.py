@@ -127,27 +127,37 @@ def generate_credibility_table(papers: list) -> str:
         else:
             preprints += 1
 
+        gh_url = paper.get("github_url", "N/A")
+        if gh_url and gh_url != "N/A":
+            repo_name = gh_url.replace("https://github.com/", "")
+            gh_link = f"[{repo_name}]({gh_url})"
+        else:
+            gh_link = "N/A"
+
         enriched.append({
             "title_link": f"[{display}]({url})",
             "year": meta["year"],
             "venue": meta["venue"],
             "citations": meta["citations"],
             "status": meta["status"],
+            "github": gh_link,
         })
         time.sleep(0.2)
 
     enriched.sort(key=lambda x: (x["citations"], int(x["year"]) if str(x["year"]).isdigit() else 0), reverse=True)
+    code_count = sum(1 for r in enriched if r["github"] != "N/A")
 
     table = (
         "# ACADEMIC CREDIBILITY & PEER-REVIEW VERIFICATION\n\n"
         f"**Total Papers Analyzed:** {len(papers)} | "
         f"**Peer-Reviewed (IEEE/CVPR/SIGGRAPH/Journals):** {peer_reviewed} | "
-        f"**ArXiv Preprints:** {preprints}\n\n"
-        "| Paper Title | Year | Publication Venue / Journal | Citations | Peer-Review Status |\n"
-        "| :--- | :---: | :--- | :---: | :--- |\n"
+        f"**ArXiv Preprints:** {preprints} | "
+        f"**Code Repositories Found:** {code_count}\n\n"
+        "| Paper Title | Year | Publication Venue / Journal | Citations | Peer-Review Status | Code Repository |\n"
+        "| :--- | :---: | :--- | :---: | :--- | :--- |\n"
     )
     for row in enriched:
-        table += f"| {row['title_link']} | {row['year']} | {row['venue']} | {row['citations']} | {row['status']} |\n"
+        table += f"| {row['title_link']} | {row['year']} | {row['venue']} | {row['citations']} | {row['status']} | {row['github']} |\n"
 
     return table
 

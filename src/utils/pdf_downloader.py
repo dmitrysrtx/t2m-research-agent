@@ -70,6 +70,14 @@ def download_pdfs(papers_list, output_dir="articles", session=None, cookie_overr
                 is_pdf_bytes = peek.startswith(b'%PDF')
                 is_html = 'html' in content_type or b'<html' in peek.lower()
 
+                # Scan landing HTML for repository links if not yet discovered
+                if is_html and (not p.get("github_url") or p.get("github_url") == "N/A"):
+                    from src.fetchers.github_finder import extract_github_url
+                    found_gh = extract_github_url(response.text)
+                    if found_gh:
+                        p["github_url"] = found_gh
+                        logger.info(f"  [github_finder] Found repo on page for '{title[:30]}': {found_gh}")
+
                 # 1. Resolve ArXiv direct PDF from landing HTML
                 if not is_pdf_bytes and (is_html or response.status_code == 200):
                     arxiv_match = re.search(r'arxiv\.org/(?:abs|pdf)/(\d{4}\.\d{4,5}(?:v\d+)?)', response.url + " " + response.text)

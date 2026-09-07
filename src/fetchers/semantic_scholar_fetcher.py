@@ -65,12 +65,16 @@ def fetch_semantic_scholar_papers(query=config.DEFAULT_SEARCH_QUERY, max_results
             if oa_data and isinstance(oa_data, dict):
                 pdf_url = oa_data.get('url')
                 
+            from src.fetchers.github_finder import extract_github_url
+            abstract_text = item.get('abstract', '').strip()
+
             papers.append({
                 "title": item.get('title', '').strip(),
                 "year": str(item.get('year', '')),
-                "abstract": item.get('abstract', '').strip(),
+                "abstract": abstract_text,
                 "url": paper_url,
                 "pdf_url": pdf_url, 
+                "github_url": extract_github_url(abstract_text) or "N/A",
                 "citations": citations,
                 "venue": item.get('venue', 'Unknown'),
                 "source": "SemanticScholar"

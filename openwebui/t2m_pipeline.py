@@ -108,6 +108,7 @@ class Pipeline:
             import src.auth.afeka_sso
             import src.auth.sso_login
             import src.fetchers.citation_enricher
+            import src.fetchers.github_finder
             import src.core.pipeline_runner
             import src.agents.sub_agents
             import src.agents.orchestrator
@@ -119,6 +120,7 @@ class Pipeline:
             importlib.reload(src.auth.afeka_sso)
             importlib.reload(src.auth.sso_login)
             importlib.reload(src.fetchers.citation_enricher)
+            importlib.reload(src.fetchers.github_finder)
             importlib.reload(src.telemetry)
             importlib.reload(src.agents.sub_agents)
             importlib.reload(src.agents.orchestrator)

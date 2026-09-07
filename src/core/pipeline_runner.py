@@ -11,6 +11,7 @@ from src.fetchers.ieee_fetcher import fetch_ieee_papers
 from src.fetchers.arxiv_fetcher import fetch_arxiv_papers
 from src.fetchers.semantic_scholar_fetcher import fetch_semantic_scholar_papers
 from src.fetchers.citation_enricher import enrich_literature_review
+from src.fetchers.github_finder import enrich_papers_with_github
 from src.utils.pdf_downloader import download_pdfs
 from src.auth import (
     prompt_auth_instructions_if_needed,
@@ -250,6 +251,17 @@ def execute_t2m_research(
         cookie_override=ezproxy_cookie
     )
     tm.tool_result("download_pdfs", result=f"Downloaded {download_count} PDFs", source="pdf_downloader")
+
+    # 2.5 DISCOVER GITHUB REPOSITORIES
+    _notify("[2.5/4] Discovering GitHub code repositories for papers...")
+    tm.tool_call("find_github_repos", args=f"{len(unique_papers)} papers target", source="github_finder")
+    gh_count = enrich_papers_with_github(
+        unique_papers,
+        session=manager.get_session(),
+        telemetry=tm,
+        status_callback=_notify
+    )
+    tm.tool_result("find_github_repos", result=f"Discovered {gh_count} GitHub repositories", source="github_finder")
 
     # 3. SUB-AGENTS ANALYSIS
     _notify("[3/4] Engaging AI Expert Sub-Agents...")

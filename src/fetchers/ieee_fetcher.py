@@ -5,6 +5,7 @@ import time
 import agent_config as config
 from src.utils.logger import logger
 from src.auth.ezproxy_auth import convert_to_ezproxy_url
+from src.fetchers.github_finder import extract_github_url
 
 def fetch_ieee_papers(query=config.DEFAULT_SEARCH_QUERY, max_results=config.MAX_RESULTS_PER_DOMAIN, ezproxy_domain=config.EZPROXY_DOMAIN_DEFAULT):
     """
@@ -133,6 +134,7 @@ def _fetch_from_openalex_ieee(query, max_results, ezproxy_domain):
                 "abstract": abstract if abstract else f"Paper published in {venue_str}.",
                 "url": convert_to_ezproxy_url(ieee_url, ezproxy_domain) if ezproxy_domain else ieee_url,
                 "pdf_url": ez_pdf_url,
+                "github_url": extract_github_url(abstract) or "N/A",
                 "citations": citations,
                 "venue": venue_str,
                 "source": "IEEE Xplore (OpenAlex)"
@@ -193,6 +195,7 @@ def _fetch_from_crossref_ieee(query, max_results, ezproxy_domain):
                     "abstract": clean_abstract,
                     "url": convert_to_ezproxy_url(ieee_url, ezproxy_domain) if ezproxy_domain else ieee_url,
                     "pdf_url": convert_to_ezproxy_url(pdf_url, ezproxy_domain) if ezproxy_domain else pdf_url,
+                    "github_url": extract_github_url(clean_abstract) or "N/A",
                     "citations": item.get('is-referenced-by-count', 0),
                     "venue": venue,
                     "source": "IEEE Xplore (Crossref)"
@@ -234,6 +237,7 @@ def _fetch_from_ieee_api(query, api_key, max_results, ezproxy_domain):
                     "abstract": abstract,
                     "url": convert_to_ezproxy_url(article_url, ezproxy_domain),
                     "pdf_url": convert_to_ezproxy_url(pdf_url, ezproxy_domain),
+                    "github_url": extract_github_url(abstract) or "N/A",
                     "citations": int(art.get("citing_paper_count", 0)),
                     "venue": art.get("publication_title", "IEEE"),
                     "source": "IEEE Xplore API"

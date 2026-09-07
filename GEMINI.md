@@ -37,6 +37,7 @@ t2m-research-agent/
     │   ├── ieee_fetcher.py             # IEEE Xplore (OpenAlex / CrossRef / IEEE API) fetcher
     │   ├── scholar_fetcher.py          # Google Scholar (via OpenAlex) fetcher
     │   ├── semantic_scholar_fetcher.py # Semantic Scholar API fetcher
+    │   ├── github_finder.py            # Multi-Tier GitHub Code Repository Discovery Engine
     │   └── citation_enricher.py        # CrossRef & ArXiv Academic Credibility Enricher
     ├── agents/                 # Layer 3: Domain Agents & Synthesis
     │   ├── orchestrator.py     # Master Orchestrator prompt & synthesis logic
@@ -59,6 +60,20 @@ t2m-research-agent/
 ```
 
 ## Architectural Decision Log
+
+### 2026-09-07: Multi-Tier GitHub Code Repository Discovery Engine (`github_finder.py`)
+- **Goal**: Automatically discover, extract, and canonicalize GitHub open-source code repositories for academic papers, eliminating universal `N/A` placeholders across Sub-Agent tables and Master Review synthesis.
+- **Key Changes**:
+  1. **Dedicated Module (`src/fetchers/github_finder.py`):** Implemented multi-tier discovery:
+     - **Tier 1 (Instant Abstract/Comment Extraction):** High-precision regex extracts `github.com/{owner}/{repo}` and `{owner}.github.io/{repo}` from abstract and ArXiv `<arxiv:comment>` fields.
+     - **Tier 2 (Landing Page HTML Inspection):** Scans download landing pages during PDF acquisition or URL resolution.
+     - **Tier 3 (Targeted Search Fallback):** Queries GitHub REST Search API (`in:name,description`) using cleaned title keywords with rate-limit and bot-protection safeguards.
+     - **Canonicalization:** Cleans trailing punctuation, strips branch subpaths (`/tree/main`, `/blob/...`, `.git`), and filters out service endpoints (`/topics`, `/features`, `/pricing`).
+  2. **Fetchers Integration:** Updated `arxiv_fetcher.py` to parse `<arxiv:comment>`, `ieee_fetcher.py`, `scholar_fetcher.py`, and `semantic_scholar_fetcher.py` to run `extract_github_url` on paper abstracts.
+  3. **PDF Downloader Integration (`pdf_downloader.py`):** Scans HTML responses during PDF downloading and attaches discovered repositories to paper dictionaries.
+  4. **Pipeline Execution Integration (`pipeline_runner.py`):** Added Step 2.5 (`find_github_repos`) between PDF download and Sub-Agent prompts, dispatching telemetry events to OpenWebUI and Terminal.
+  5. **Academic Credibility Table Enrichment (`citation_enricher.py`):** Added `Code Repository` column to the `# ACADEMIC CREDIBILITY & PEER-REVIEW VERIFICATION` table.
+  6. **OpenWebUI Pipeline Dynamic Reload:** Added `src.fetchers.github_finder` to hot-reloading list in `openwebui/t2m_pipeline.py`.
 
 ### 2026-09-06: Decoupled Telemetry Architecture (Event Dispatcher, Rich Terminal, Langfuse v3, SSE)
 - **Goal**: Decouple core agent execution from logging and output handlers following the Event Dispatcher Pattern, eliminate raw JSON terminal clutter, silence background tracing, and provide SSE streaming.

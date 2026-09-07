@@ -4,6 +4,7 @@ from typing import List, Dict, Any
 import agent_config as config
 from src.utils.logger import logger
 from src.auth.ezproxy_auth import convert_to_ezproxy_url
+from src.fetchers.github_finder import extract_github_url
 
 def fetch_google_scholar_papers(
     query: str = config.DEFAULT_SEARCH_QUERY,
@@ -74,6 +75,7 @@ def fetch_google_scholar_papers(
                     "abstract": abstract or f"Academic paper in {venue} ({year}).",
                     "url": landing_url,
                     "pdf_url": pdf_url,
+                    "github_url": extract_github_url(abstract) or "N/A",
                     "doi": doi,
                     "source": "Google Scholar"
                 })
@@ -147,6 +149,7 @@ def fetch_google_scholar_papers(
                         "abstract": f"Paper published in {venue} ({year}). DOI: {doi}",
                         "url": item_url,
                         "pdf_url": pdf_url,
+                        "github_url": "N/A",
                         "doi": doi,
                         "source": "Google Scholar"
                     })
