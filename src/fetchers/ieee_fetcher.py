@@ -69,22 +69,28 @@ def _fetch_from_openalex_ieee(query, max_results, ezproxy_domain):
         
         for item in results:
             doi = item.get('doi') or ''
-            loc = item.get('primary_location') or {}
-            src = loc.get('source') or {}
-            venue = src.get('display_name') or 'IEEE Conference/Journal'
-            publisher = src.get('publisher') or ''
-            
-            doi_str = str(doi) if doi else ''
-            venue_str = str(venue) if venue else ''
-            publisher_str = str(publisher) if publisher else ''
-            
-            is_ieee = ("10.1109" in doi_str) or ("ieee" in venue_str.lower()) or ("ieee" in publisher_str.lower())
-            
             title = item.get('title', '')
-            if not title:
+            if not title or len(title.strip()) < 8:
                 continue
             title = str(title).strip()
             
+            # Filter non-paper media (e.g. supplementary mp4, zip, errata)
+            title_lower = title.lower()
+            if any(title_lower.endswith(ext) for ext in [".mp4", ".avi", ".mov", ".zip", ".tar.gz", ".supp", ".mp3"]):
+                continue
+            if any(title_lower.startswith(pfx) for pfx in ["author index", "table of contents", "cover image", "session details", "title page"]):
+                continue
+
+            loc = item.get('primary_location') or {}
+            src = loc.get('source') or {}
+            venue = src.get('display_name') or loc.get('raw_source_name') or 'IEEE Conference Proceedings'
+            publisher = src.get('publisher') or ''
+            
+            doi_str = str(doi) if doi else ''
+            venue_str = str(venue) if venue else 'IEEE Conference Proceedings'
+            publisher_str = str(publisher) if publisher else ''
+            
+            is_ieee = ("10.1109" in doi_str) or ("ieee" in venue_str.lower()) or ("ieee" in publisher_str.lower())
             if not is_ieee:
                 continue
                 
@@ -128,6 +134,7 @@ def _fetch_from_openalex_ieee(query, max_results, ezproxy_domain):
             else:
                 ez_pdf_url = pdf_url
 
+            clean_doi = doi_str.replace("https://doi.org/", "").strip() if doi_str else ""
             papers.append({
                 "title": title,
                 "year": str(pub_year),
@@ -137,6 +144,7 @@ def _fetch_from_openalex_ieee(query, max_results, ezproxy_domain):
                 "github_url": extract_github_url(abstract) or "N/A",
                 "citations": citations,
                 "venue": venue_str,
+                "doi": clean_doi,
                 "source": "IEEE Xplore (OpenAlex)"
             })
             
@@ -168,12 +176,21 @@ def _fetch_from_crossref_ieee(query, max_results, ezproxy_domain):
             for item in items:
                 title_list = item.get('title', [])
                 title = title_list[0] if title_list else ''
+                if not title or len(title.strip()) < 8:
+                    continue
+                title_lower = title.lower()
+                if any(title_lower.endswith(ext) for ext in [".mp4", ".avi", ".mov", ".zip", ".tar.gz", ".supp", ".mp3"]):
+                    continue
+                if any(title_lower.startswith(pfx) for pfx in ["author index", "table of contents", "cover image", "session details", "title page"]):
+                    continue
+                    
                 doi = item.get('DOI', '')
                 pub_year = item.get('created', {}).get('date-parts', [[2023]])[0][0]
-                container = item.get('container-title', ['IEEE Conference/Journal'])
-                venue = container[0] if container else 'IEEE'
+                container = item.get('container-title', [])
+                event_name = item.get('event', {}).get('name')
+                venue = container[0] if container else (event_name if event_name else 'IEEE Conference Proceedings')
                 
-                if not title or not doi:
+                if not doi:
                     continue
                     
                 m = re.search(r'(\d{6,8})(?:/[^/]+)?$', doi)
@@ -198,6 +215,7 @@ def _fetch_from_crossref_ieee(query, max_results, ezproxy_domain):
                     "github_url": extract_github_url(clean_abstract) or "N/A",
                     "citations": item.get('is-referenced-by-count', 0),
                     "venue": venue,
+                    "doi": doi,
                     "source": "IEEE Xplore (Crossref)"
                 })
                 

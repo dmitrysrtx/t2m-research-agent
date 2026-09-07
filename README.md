@@ -121,16 +121,15 @@ cp .env.example .env
 
 The framework consolidates institutional authentication and token preservation into a unified `src/auth/` package:
 
-1. **Preemptive Live Probe (`EZProxyManager`):**
-   Before querying academic search APIs or calling AI sub-agents, `EZProxyManager` executes a lightweight 1-second live probe to IEEE Xplore to verify full-text download entitlement.
-2. **IEEE SAML Federated 2FA SSO:**
-   If institutional cookies are missing or expired:
-   - Type `/login` in OpenWebUI (or run with `AUTO_SSO_LOGIN=True`).
-   - The browser flow navigates to IEEE Xplore (`ieeexplore.ieee.org`), clicks **Institutional Sign In** -> **Access Through Your Institution**, selects **Afeka College**, fills credentials, and triggers an authentic 2FA push notification to your phone.
-   - Simply approve with your fingerprint. The SAML callback redirects back to IEEE Xplore, captures the institutional entitlement token (`ERIGHTS`), and resumes pipeline execution.
-3. **Fail-Fast Token Preservation:**
+1. **Preemptive Live Probe & Auto-Sync (`EZProxyManager`):**
+   Before querying academic search APIs or calling AI sub-agents, `EZProxyManager` executes a live probe to IEEE Xplore to verify full-text download entitlement. Refreshed session tokens (`WLSESSION`, `seqId`, `xpluserinfo`) are automatically synchronized to `ezproxy_cookies.json` after probes and PDF downloads, keeping the session alive indefinitely.
+2. **Early Active Detection & 2FA Minimization (`sso_login.py`):**
+   The browser automation pre-populates existing session cookies and immediately checks if IEEE Xplore already has an active institutional session. If active, it silently refreshes credentials and resumes in seconds **without prompting 2FA**. Mobile push 2FA is requested strictly when single sign-on re-authentication is genuinely required.
+3. **Strict Cookie Sanitization & Isolation:**
+   Filters out 30-second ephemeral tokens (`TSaf*`), AWS removal tags (`AWSALBAPP*=_remove_`), and third-party trackers (`_cl*`, `tt*`, `_ga*`) to prevent WAF rejection and header bloat. Valve inputs never overwrite or corrupt the managed session file.
+4. **Fail-Fast Token Preservation:**
    If access is unauthenticated or push is not approved, execution halts immediately (**0 LLM tokens spent**) and returns clear resolution steps.
-4. **Standalone CLI Diagnostics:**
+5. **Standalone CLI Diagnostics:**
    Every authentication module includes an isolated test block for terminal verification:
    ```bash
    # Check session status and verify live IEEE Xplore access
@@ -139,7 +138,7 @@ The framework consolidates institutional authentication and token preservation i
    # Run direct IEEE live probe
    python3 -m src.auth.ezproxy_auth
 
-   # Trigger IEEE -> Afeka 2FA login directly
+   # Trigger IEEE -> Afeka institutional login directly
    python3 -m src.auth.sso_login
    ```
 
@@ -167,6 +166,24 @@ The framework implements the **Event Dispatcher Pattern** via `TelemetryManager`
 
 ---
 
+## 🔬 Academic Credibility & GitHub Verification (`src/fetchers/`)
+
+The framework automatically verifies peer-review integrity and code availability:
+
+1. **Direct DOI CrossRef Resolution (`src/fetchers/citation_enricher.py`):**
+   - Resolves exact conference and journal venues (e.g., CVPR, ICCV, IEEE Transactions) directly via CrossRef API (`api.crossref.org/works/{doi}`).
+   - Implements strict token matching (`>= 75%` overlap and length ratio verification) to prevent fuzzy title mismatches.
+   - Eliminates generic placeholders (never outputs `"Peer-Reviewed Journal"`); marks unrefereed papers accurately as `"arXiv"` preprints.
+2. **Verified GitHub Code Discovery (`src/fetchers/github_finder.py`):**
+   - Discovers official code repositories from paper abstracts, ArXiv comments, and landing HTML.
+   - Verifies HTTP liveness (`status_code == 200`) via lightweight HEAD requests before attaching links, eliminating dead, deleted, or empty placeholder repositories. Outputs clean `N/A` when no authentic public repository exists.
+3. **Standalone Diagnostics:**
+   ```bash
+   python3 -m src.fetchers.citation_enricher
+   python3 -m src.fetchers.github_finder
+   ```
+
+---
 
 ## 🚀 Running the Framework
 

@@ -55,7 +55,7 @@ class Pipeline:
         )
         EZPROXY_COOKIE: Optional[str] = Field(
             default="",
-            description="Institutional cookie (e.g. 'ezproxy=...' or Cookie-Editor JSON). Required for downloading IEEE PDFs. Leave empty to use ezproxy_cookies.json."
+            description="Institutional cookie override (e.g. Cookie-Editor JSON or 'ERIGHTS=...'). Leave empty to automatically use managed persistent session from ezproxy_cookies.json."
         )
         EZPROXY_DOMAIN: Optional[str] = Field(
             default=config.EZPROXY_DOMAIN_DEFAULT,
@@ -63,7 +63,7 @@ class Pipeline:
         )
         AUTO_SSO_LOGIN: Optional[bool] = Field(
             default=config.AUTO_SSO_LOGIN_DEFAULT,
-            description="Automatically trigger mobile push 2FA on phone if IEEE session cookies expire"
+            description="Automatically renew institutional session via persistent profile (silent renewal or mobile push 2FA if re-authentication needed)"
         )
         KINEMATIC_PROMPT: Optional[str] = Field(
             default=KINEMATIC_SYSTEM_PROMPT,

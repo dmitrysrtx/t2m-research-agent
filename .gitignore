@@ -16,3 +16,9 @@ __pycache__/
 LITERATURE_REVIEW.md
 articles/
 *.log
+proposal_en.md
+proposal_ru.md
+
+# Browser Profile & Authentication State
+src/auth/.browser_profile/
+*.txt

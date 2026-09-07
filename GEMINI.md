@@ -61,6 +61,26 @@ t2m-research-agent/
 
 ## Architectural Decision Log
 
+### 2026-09-07: Resilient Institutional Authentication, Session Persistence & 2FA Elimination
+- **Goal**: Eliminate repeated 2FA (mobile fingerprint/push approval) prompts on every pipeline run, prevent stale cookie shadowing, auto-synchronize live session tokens back to disk, and sanitize tracking/ephemeral tokens.
+- **Root Causes & Key Changes**:
+  1. **Session Cookie Re-Use & Early Active Detection (`sso_login.py`):** Pre-populated Playwright browser contexts with existing institutional cookies (`context.add_cookies()`) and added early detection for active Afeka College sessions on IEEE Xplore. If institutional access is already granted, it extracts updated cookies and exits immediately without prompting 2FA or retyping credentials.
+  2. **Automated Live Cookie Sync to Disk (`ezproxy_session.py` & `pipeline_runner.py`):** Added `sync_session_cookies_to_disk()` to `EZProxyManager`. Invoked automatically during live health checks and immediately after PDF downloads in `pipeline_runner.py` to persist refreshed tokens (`WLSESSION`, `seqId`, `xpluserinfo`) back to `ezproxy_cookies.json`, preventing session expiration while idle.
+  3. **Strict Cookie Sanitization (`ezproxy_auth.py`):** Filtered out ephemeral F5 ASM tokens (`TSaf*` with 30s TTL), AWS removal markers (`AWSALBAPP*=_remove_`), and third-party trackers (`_cl*`, `tt*`, `_ga*`, etc.) on both disk load and disk save.
+  4. **Valve Precedence & Process Isolation Fix (`ezproxy_auth.py` & `pipeline_runner.py`):** Guaranteed `ezproxy_cookies.json` is loaded whenever it contains a valid `ERIGHTS` token. Removed global `os.environ["EZPROXY_COOKIE"]` mutation in `pipeline_runner.py` so empty/stale valve inputs no longer poison subsequent runs in the container process.
+  5. **Resilient Health Probes (`ezproxy_auth.py`):** Increased live probe timeout from 8s to 15s to eliminate false-positive network timeouts, properly resolved relative redirects via `urljoin`, and merged any refreshed response cookies directly to disk.
+  6. **Host File Ownership & Permissions:** Enforced standard host user ownership (`dmitryx:dmitryx`) and proper mode differentiation (`0o777` for directories, `0o666` for files).
+
+### 2026-09-07: Publication Venue Accuracy, DOI Direct Lookup & Verified GitHub Discovery
+- **Goal**: Resolve inaccurate venue names (`"Peer-Reviewed Journal"`, false-positive book chapters like `"Human Pose Analysis"`), wrong publication years (2025 instead of 2020), supplementary media artifacts (`.mp4`), and dead/irrelevant GitHub links.
+- **Root Causes & Key Changes**:
+  1. **Direct DOI CrossRef Lookup (`citation_enricher.py`):** Prioritized direct DOI API queries (`https://api.crossref.org/works/{doi}`) instead of fuzzy title search. Extracted conference names from `container-title`, `event.name` (e.g. CVPR, ICCV, ICRA), `publisher`, and `group-title`. Completely eliminated the hardcoded string `"Peer-Reviewed Journal"`.
+  2. **Strict Title Match Safeguard:** Replaced loose 0.4 token threshold with strict `>= 0.75` token overlap and `>= 0.6` character length ratio, preventing short common keywords from matching unrelated book chapters. If CrossRef search lacks high confidence, upstream fetcher metadata is preserved.
+  3. **ArXiv & Preprint Categorization:** ArXiv publications without external peer-reviewed DOIs or journal refs are explicitly marked as venue `"arXiv"` and status `"Preprint (arXiv)"`.
+  4. **Supplementary Media Filtering:** Filtered non-paper media files (`.mp4`, `.avi`, `.mov`, `.supp`, `.zip`) across `ieee_fetcher.py`, `scholar_fetcher.py`, and `citation_enricher.py`.
+  5. **Verified GitHub Liveness & Loose Search Removal (`github_finder.py`):** Removed unconstrained keyword GitHub search API fallback that returned unrelated repos (e.g. market reports). Added `is_github_repo_live` HTTP HEAD verification to ensure candidate repositories exist, are public, and return HTTP 200 before attaching them; otherwise cleanly outputs `N/A`.
+  6. **OpenAlex Venue & Citation Enhancement (`scholar_fetcher.py`):** Updated OpenAlex parsing to extract `raw_source_name` and alternate locations when primary `source.display_name` is null, and preserved `cited_by_count`.
+
 ### 2026-09-07: Multi-Tier GitHub Code Repository Discovery Engine (`github_finder.py`)
 - **Goal**: Automatically discover, extract, and canonicalize GitHub open-source code repositories for academic papers, eliminating universal `N/A` placeholders across Sub-Agent tables and Master Review synthesis.
 - **Key Changes**:

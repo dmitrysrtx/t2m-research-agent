@@ -50,21 +50,34 @@ def clean_github_url(raw_url: str) -> Optional[str]:
     return f"https://github.com/{owner}/{repo}"
 
 
+def is_github_repo_live(gh_url: str) -> bool:
+    """Verifies that the candidate repository exists, is public, and not 404/deleted."""
+    if not gh_url or not gh_url.startswith("https://github.com/"):
+        return False
+    try:
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AcademicResearchAgent/2.0"}
+        token = os.getenv("GITHUB_TOKEN")
+        if token:
+            headers["Authorization"] = f"token {token}"
+        r = requests.head(gh_url, headers=headers, timeout=2.5, allow_redirects=True)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
 def extract_github_url(text: str) -> Optional[str]:
     """Extracts the first valid GitHub repository URL from arbitrary text or HTML."""
     if not text:
         return None
     for match in GITHUB_RE.finditer(text):
-        candidate = f"https://github.com/{match.group(1)}"
-        cleaned = clean_github_url(candidate)
-        if cleaned:
-            return cleaned
+        candidate = clean_github_url(f"https://github.com/{match.group(1)}")
+        if candidate:
+            return candidate
 
     for match in GITHUB_IO_RE.finditer(text):
-        candidate = f"https://github.com/{match.group(1)}/{match.group(2)}"
-        cleaned = clean_github_url(candidate)
-        if cleaned:
-            return cleaned
+        candidate = clean_github_url(f"https://github.com/{match.group(1)}/{match.group(2)}")
+        if candidate:
+            return candidate
     return None
 
 
@@ -72,7 +85,6 @@ def find_github_on_page(url: str, session: Optional[requests.Session] = None) ->
     """Fetches candidate landing page HTML and scans for GitHub links."""
     if not url or not url.startswith("http"):
         return None
-    # Avoid stalling on heavy bot-protected publisher portals without valid session
     if any(d in url.lower() for d in SKIP_SCRAPE_DOMAINS) and session is None:
         return None
     try:
@@ -86,64 +98,32 @@ def find_github_on_page(url: str, session: Optional[requests.Session] = None) ->
     return None
 
 
-def search_github_api(title: str) -> Optional[str]:
-    """Queries GitHub REST Search API as a targeted fallback for paper titles."""
-    if not title or len(title.strip()) < 8:
-        return None
-    clean_title = re.sub(r'[^a-zA-Z0-9\s]', ' ', title).strip()
-    words = [w for w in clean_title.split() if len(w) > 3 and w.lower() not in {"using", "with", "from", "based", "approach"}]
-    if not words:
-        return None
-    query = " ".join(words[:4])
-    url = f"https://api.github.com/search/repositories?q={urllib.parse.quote(query)}+in:name,description&sort=stars&per_page=3"
-    headers = {"User-Agent": "T2M-Academic-Agent/2.0"}
-    token = os.getenv("GITHUB_TOKEN")
-    if token:
-        headers["Authorization"] = f"token {token}"
-    try:
-        r = requests.get(url, headers=headers, timeout=3)
-        if r.status_code == 200:
-            for item in r.json().get("items", []):
-                repo_url = item.get("html_url")
-                desc = (item.get("description") or "").lower()
-                name = (item.get("name") or "").lower()
-                if any(w.lower() in desc or w.lower() in name for w in words[:2]):
-                    return clean_github_url(repo_url)
-    except Exception as e:
-        logger.debug(f"[github_finder] GitHub API search error for '{title[:30]}': {e}")
-    return None
-
-
 def resolve_paper_github(paper: Dict[str, Any], session: Optional[requests.Session] = None) -> Optional[str]:
-    """Multi-tiered resolution: Abstract -> Comment -> Landing Page -> GitHub Search."""
+    """Multi-tiered resolution: Abstract -> Comment -> Landing Page with HTTP liveness check."""
     existing = paper.get("github_url")
     if existing and existing != "N/A":
         cleaned = clean_github_url(existing)
-        if cleaned:
+        if cleaned and is_github_repo_live(cleaned):
             return cleaned
 
+    # Tier 1: Abstract and comment text
     abstract = paper.get("abstract", "")
     comment = paper.get("comment", "")
     url_from_text = extract_github_url(f"{comment} {abstract}")
-    if url_from_text:
+    if url_from_text and is_github_repo_live(url_from_text):
         return url_from_text
 
+    # Tier 2: Landing page / ArXiv abs page
     landing_url = paper.get("url") or ""
-    if "arxiv.org/abs/" in landing_url or "arxiv.org/pdf/" in landing_url:
+    if "arxiv.org" in landing_url:
         arxiv_abs = landing_url.replace("/pdf/", "/abs/").replace(".pdf", "")
         page_gh = find_github_on_page(arxiv_abs, session=session)
-        if page_gh:
+        if page_gh and is_github_repo_live(page_gh):
             return page_gh
     elif landing_url:
         page_gh = find_github_on_page(landing_url, session=session)
-        if page_gh:
+        if page_gh and is_github_repo_live(page_gh):
             return page_gh
-
-    title = paper.get("title", "")
-    if title:
-        found = search_github_api(title)
-        if found:
-            return found
 
     return None
 
@@ -154,7 +134,7 @@ def enrich_papers_with_github(
     telemetry: Optional[Any] = None,
     status_callback: Optional[Any] = None
 ) -> int:
-    """Batch-enriches papers in-place with 'github_url' and returns count of discovered repos."""
+    """Batch-enriches papers in-place with verified 'github_url' and returns count of discovered repos."""
     found_count = 0
     total = len(papers)
     for i, paper in enumerate(papers):
@@ -168,7 +148,7 @@ def enrich_papers_with_github(
         else:
             paper["github_url"] = "N/A"
 
-    logger.info(f"[*] Discovered {found_count}/{total} GitHub code repositories.")
+    logger.info(f"[*] Discovered {found_count}/{total} verified GitHub code repositories.")
     return found_count
 
 
@@ -179,14 +159,19 @@ if __name__ == "__main__":
     test_sample = [
         {
             "title": "Human Motion Diffusion Model",
-            "abstract": "We introduce MDM. Project page: https://guytevet.github.io/mdm-page/ and code: https://github.com/GuyTevet/motion-diffusion-model.",
+            "abstract": "We introduce MDM. Code: https://github.com/GuyTevet/motion-diffusion-model.",
             "url": "https://arxiv.org/abs/2209.14916"
         },
         {
             "title": "PhysDiff: Physics-Guided Human Motion Diffusion Model",
-            "comment": "ICCV 2023 (Oral). Project page: https://nvlabs.github.io/PhysDiff",
+            "comment": "ICCV 2023 (Oral). Project: https://nvlabs.github.io/PhysDiff",
             "abstract": "Denoising diffusion models hold great promise.",
             "url": "https://arxiv.org/abs/2212.02500"
+        },
+        {
+            "title": "Non-existent repo test",
+            "abstract": "Check code at https://github.com/fakeuser123891048123/nonexistent-repo-test-xyz.",
+            "url": "https://arxiv.org/abs/2001.00000"
         }
     ]
     count = enrich_papers_with_github(test_sample)
@@ -195,3 +180,6 @@ if __name__ == "__main__":
         print(f"    GitHub: {p['github_url']}", flush=True)
     print(f"[*] Total Discovered: {count}/{len(test_sample)}", flush=True)
     print("==================================================", flush=True)
+    assert test_sample[0]["github_url"] == "https://github.com/GuyTevet/motion-diffusion-model"
+    assert test_sample[2]["github_url"] == "N/A", "Non-existent repo should be N/A!"
+    print("✅ All GitHub Finder assertions passed!", flush=True)

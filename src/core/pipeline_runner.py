@@ -145,9 +145,8 @@ def execute_t2m_research(
         source="pipeline_runner"
     )
 
-    if ezproxy_cookie.strip():
-        os.environ["EZPROXY_COOKIE"] = ezproxy_cookie.strip()
-        tm.tool_result("config", "Using EZproxy cookie provided via Valves", source="auth")
+    if ezproxy_cookie and ezproxy_cookie.strip():
+        tm.tool_result("config", "Using explicit EZproxy cookie override provided via Valves", source="auth")
 
     manager = EZProxyManager(cookie_override=ezproxy_cookie)
 
@@ -250,6 +249,7 @@ def execute_t2m_research(
         session=manager.get_session(),
         cookie_override=ezproxy_cookie
     )
+    manager.sync_session_cookies_to_disk()
     tm.tool_result("download_pdfs", result=f"Downloaded {download_count} PDFs", source="pdf_downloader")
 
     # 2.5 DISCOVER GITHUB REPOSITORIES

@@ -35,11 +35,25 @@ def fetch_google_scholar_papers(
             data = resp.json()
             for item in data.get("results", []):
                 title = item.get("display_name") or "Untitled"
+                title_lower = title.lower()
+                if any(title_lower.endswith(ext) for ext in [".mp4", ".avi", ".mov", ".zip", ".supp"]):
+                    continue
+                if any(title_lower.startswith(pfx) for pfx in ["author index", "table of contents", "cover image"]):
+                    continue
                 year = item.get("publication_year") or "N/A"
+                citations = item.get("cited_by_count", 0)
                 
                 location = item.get("primary_location") or {}
                 source_obj = location.get("source") or {}
-                venue = source_obj.get("display_name") or "Academic Publication"
+                venue = source_obj.get("display_name") or location.get("raw_source_name")
+                if not venue:
+                    for loc in item.get("locations", []):
+                        v = (loc.get("source") or {}).get("display_name") or loc.get("raw_source_name")
+                        if v:
+                            venue = v
+                            break
+                if not venue:
+                    venue = "Academic Conference / Journal"
                 
                 doi = item.get("doi") or ""
                 landing_url = location.get("landing_page_url") or doi or f"https://openalex.org/{item.get('id')}"
@@ -72,6 +86,7 @@ def fetch_google_scholar_papers(
                     "authors": authors_str,
                     "year": str(year),
                     "venue": venue,
+                    "citations": citations,
                     "abstract": abstract or f"Academic paper in {venue} ({year}).",
                     "url": landing_url,
                     "pdf_url": pdf_url,
@@ -106,7 +121,9 @@ def fetch_google_scholar_papers(
                     title = titles[0] if titles else "Untitled"
                     
                     container = item.get("container-title", [])
-                    venue = container[0] if container else "Academic Venue"
+                    event_name = item.get("event", {}).get("name")
+                    venue = container[0] if container else (event_name if event_name else "Academic Proceedings")
+                    citations = int(item.get("is-referenced-by-count", 0))
                     
                     year = "N/A"
                     if "published-print" in item:
@@ -146,6 +163,7 @@ def fetch_google_scholar_papers(
                         "authors": authors_str,
                         "year": str(year),
                         "venue": venue,
+                        "citations": citations,
                         "abstract": f"Paper published in {venue} ({year}). DOI: {doi}",
                         "url": item_url,
                         "pdf_url": pdf_url,
