@@ -13,6 +13,7 @@ from src.fetchers.arxiv_fetcher import fetch_arxiv_papers
 from src.fetchers.semantic_scholar_fetcher import fetch_semantic_scholar_papers
 from src.fetchers.citation_enricher import enrich_literature_review
 from src.fetchers.github_finder import enrich_papers_with_github, resolve_paper_github
+from src.utils.text_formatters import clean_github_markdown_link
 from src.utils.pdf_downloader import download_pdfs
 from src.auth import (
     prompt_auth_instructions_if_needed,
@@ -123,7 +124,8 @@ def sanitize_markdown_table_github_urls(table_text: str, verified_urls: set) -> 
             return "N/A"
         return full_text
 
-    return re.sub(r'\[([^\]]+)\]\((https?://github\.com/[^\)\s]+)\)', _replace_link, table_text)
+    sanitized = re.sub(r'\[([^\]]+)\]\((https?://github\.com/[^\)\s]+)\)', _replace_link, table_text)
+    return clean_github_markdown_link(sanitized)
 
 
 def rank_and_filter_candidates(
@@ -140,11 +142,10 @@ def rank_and_filter_candidates(
     if not candidates:
         return []
 
-    for p in candidates:
-        if "github_url" not in p or p["github_url"] in ("N/A", "", None):
-            gh_url = resolve_paper_github(p, session=session)
-            p["github_url"] = gh_url if gh_url else "N/A"
+    # 1. Concurrently resolve repositories for all candidate papers
+    enrich_papers_with_github(candidates, session=session)
 
+    for p in candidates:
         has_code = p.get("github_url") and p.get("github_url") != "N/A"
         boost = getattr(config, "CODE_ARTIFACT_SCORE_BOOST", 35.0) if has_code else 0.0
         cit = p.get("citations") or 0
@@ -448,7 +449,7 @@ if __name__ == "__main__":
     # Validate table sanitizer
     test_raw = "| Paper | [Valid](https://github.com/wuyan01/UniPhys) | [Dead](https://github.com/QianChen113/RetinaDiff) |"
     test_sanitized = sanitize_markdown_table_github_urls(test_raw, {"https://github.com/wuyan01/UniPhys"})
-    assert test_sanitized.count("https://github.com/wuyan01/UniPhys") == 1
+    assert "[wuyan01/UniPhys](https://github.com/wuyan01/UniPhys)" in test_sanitized
     assert "QianChen113" not in test_sanitized
     assert "N/A" in test_sanitized
     print("[*] Table Sanitizer Validation: PASSED")

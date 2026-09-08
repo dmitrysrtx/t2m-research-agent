@@ -48,7 +48,7 @@ def is_github_repo_live(gh_url: str) -> bool:
     if token:
         headers["Authorization"] = f"token {token}"
     try:
-        resp = requests.get(gh_url, headers=headers, stream=True, timeout=(3.0, 4.0), allow_redirects=True)
+        resp = requests.get(gh_url, headers=headers, stream=True, timeout=(2.0, 3.0), allow_redirects=True)
         status = resp.status_code
         resp.close()
         if status == 200:

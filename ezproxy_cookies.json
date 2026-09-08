@@ -32,10 +32,10 @@
   "PHPSESSID": "o85rdkmfh28he9crjqfglbmreg",
   "cosession": "6aa014f5284e80-90748651-m",
   "6dac2f63-9497-4512-a3d3-02517610e82d": "17da4a1b5553bcbed1317a0a1ee6fa4b",
-  "idp_session": "sVERSION_1d0175142-867c-4c0d-86c9-e6df934e079e",
-  "idp_session_http": "hVERSION_1a4e6340f-d3c9-4978-a40a-eec5af1235b2",
-  "idp_marker": "0aa421a7-e511-4801-9528-24f7c23ca7ea",
-  "CONTENT_USAGE_SESSIONID": "\"e56c0582-be49-49b0-9f88-5b65907624ea\"",
-  "csrf-token": "\"v9RhIXoybEnlKNsVforiOMYwOpa58hCxjHKnUxH7NbM=\"",
-  "user.uuid.v2": "\"e3ed702e-b107-4a42-b127-a93220cb7b34\""
+  "idp_session": "sVERSION_13c1c9005-09c3-4104-b5d2-7b470965a3d4",
+  "idp_session_http": "hVERSION_191a10e14-a544-4a5c-ae6c-354bc41d3bc4",
+  "idp_marker": "11220fcb-49d0-4dc1-96a2-ec8fc34fe2e0",
+  "CONTENT_USAGE_SESSIONID": "\"0039e18d-906e-4a68-a9f5-de2d7004b0d7\"",
+  "csrf-token": "\"TPYSjldA/nkiG93rrPQTw+op5s55hpEh8ScgsmBMt60=\"",
+  "user.uuid.v2": "\"4aae395b-44f6-4352-8139-7475adde1219\""
 }

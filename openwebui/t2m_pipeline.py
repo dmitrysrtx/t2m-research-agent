@@ -126,6 +126,7 @@ class Pipeline:
             import src.fetchers.citation_enricher
             import src.fetchers.github_verifier
             import src.fetchers.github_finder
+            import src.utils.text_formatters
             import src.core.pipeline_runner
             import src.agents.sub_agents
             import src.agents.orchestrator
@@ -143,6 +144,7 @@ class Pipeline:
             importlib.reload(src.fetchers.citation_enricher)
             importlib.reload(src.fetchers.github_verifier)
             importlib.reload(src.fetchers.github_finder)
+            importlib.reload(src.utils.text_formatters)
             importlib.reload(src.telemetry)
             importlib.reload(src.agents.sub_agents)
             importlib.reload(src.agents.orchestrator)

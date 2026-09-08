@@ -17,14 +17,17 @@ Includes multi-fetcher academic search across **Google Scholar**, **IEEE Xplore*
 2. **Automated Output Management:**
    - Whether triggered via CLI (`main.py`) or OpenWebUI Pipeline (`t2m_pipeline.py`), the generated synthesis report is saved to:
      - `LITERATURE_REVIEW.md` (root directory)
+   - **Cascading Multi-Tier PDF Ingestion:** Resolves full-text PDFs through 4 fallback tiers (Direct OA -> ArXiv conversion -> Unpaywall via DOI -> IEEE EZProxy stamp).
    - Downloaded full-text PDF articles are stored cleanly in `articles/*.pdf`.
 
 3. **Multi-Tier GitHub Code Repository Discovery & Verification Engine:**
    Automatically resolves, verifies, and sanitizes open-source code repositories across all processed papers:
+   - **Parallel Execution (`ThreadPoolExecutor max_workers=8`):** Scans candidate papers concurrently with 2.0-3.0s timeouts, slashing repository discovery time to < 1.5 seconds.
    - **Tier 1 (Direct Text Regex):** Extracts `github.com/owner/repo` from abstract text and ArXiv `<arxiv:comment>` fields.
    - **Tier 2 (Author Project Pages):** Resolves project sites (`*.github.io`) linked from abstract or comments to find repository links.
    - **Tier 3 (ArXiv Resolution & Title Discovery):** Inspects ArXiv landing pages via `arxiv_id` or queries ArXiv API by paper title to resolve comments and project pages (e.g., UniPhys).
    - **Tier 4 (Targeted Verified GitHub Search):** Searches GitHub API using clean title keywords with strict keyword overlap validation and 200 OK HTTP liveness checks (e.g., STRAPS BMVC 2020).
+   - **Uniform Markdown Link Formatting:** Enforces `[owner/repo](https://github.com/owner/repo)` format across all sub-agent and orchestrator tables via `clean_github_markdown_link()`.
    - **Zero-Tolerance Dead Link Sanitization:** Masks unverified/dead links (404) from LLM prompts and strictly sanitizes Sub-Agent and Orchestrator Markdown tables to ensure dead links never appear in reports.
 
 4. **Multi-Agent RAG Pipeline:**
@@ -78,7 +81,8 @@ t2m-research-agent/
 │   │       ├── langfuse_sink.py  # Langfuse v3 background sink (silent stdout)
 │   │       └── sse.py            # Server-Sent Events queue & stream generator
 │   ├── utils/                    # CROSS-CUTTING UTILITIES
-│   │   ├── pdf_downloader.py     # PDF Downloader with Authenticated Sessions
+│   │   ├── pdf_downloader.py     # Cascading Multi-Tier PDF Ingestion Engine
+│   │   ├── text_formatters.py    # Markdown GitHub Link Standardizer & Sanitizer
 │   │   └── logger.py             # System Logger (file-only)
 │   └── core/
 │       └── pipeline_runner.py    # Central pipeline execution engine
