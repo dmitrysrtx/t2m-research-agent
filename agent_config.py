@@ -22,6 +22,8 @@ ENABLE_IEEE_DEFAULT = os.getenv("ENABLE_IEEE", "True").lower() == "true"
 ENABLE_SCHOLAR_DEFAULT = os.getenv("ENABLE_SCHOLAR", "True").lower() == "true"
 ENABLE_ARXIV_DEFAULT = os.getenv("ENABLE_ARXIV", "False").lower() == "true"
 ENABLE_SEMANTIC_SCHOLAR_DEFAULT = os.getenv("ENABLE_SEMANTIC_SCHOLAR", "False").lower() == "true"
+SEMANTIC_SCHOLAR_API_KEY = os.getenv("SEMANTIC_SCHOLAR_API_KEY", "")
+SEMANTIC_SCHOLAR_MIN_CITATIONS = int(os.getenv("SEMANTIC_SCHOLAR_MIN_CITATIONS", "0"))
 
 DEFAULT_OUTPUT_FILE = os.getenv("DEFAULT_OUTPUT_FILE", "LITERATURE_REVIEW.md")
 
@@ -50,7 +52,7 @@ if __name__ == "__main__":
     print(f"[*] API Key Present: {'Yes' if API_KEY else 'No'}")
     print(f"[*] Search Query Default: {DEFAULT_SEARCH_QUERY}")
     print(f"[*] Max Results Per Domain: {MAX_RESULTS_PER_DOMAIN}")
-    print(f"[*] Fetchers -> IEEE: {ENABLE_IEEE_DEFAULT} | Scholar: {ENABLE_SCHOLAR_DEFAULT} | ArXiv: {ENABLE_ARXIV_DEFAULT} | Semantic: {ENABLE_SEMANTIC_SCHOLAR_DEFAULT}")
+    print(f"[*] Fetchers -> IEEE: {ENABLE_IEEE_DEFAULT} | Scholar: {ENABLE_SCHOLAR_DEFAULT} | ArXiv: {ENABLE_ARXIV_DEFAULT} | Semantic: {ENABLE_SEMANTIC_SCHOLAR_DEFAULT} (API Key: {'Yes' if SEMANTIC_SCHOLAR_API_KEY else 'No'})")
     print(f"[*] Output Report: {DEFAULT_OUTPUT_FILE}")
     print(f"[*] Institution: {IEEE_INSTITUTION_DEFAULT} ({EZPROXY_DOMAIN_DEFAULT})")
     print(f"[*] Auto 2FA SSO: {AUTO_SSO_LOGIN_DEFAULT}")

@@ -49,6 +49,10 @@ class Pipeline:
             default=config.ENABLE_SEMANTIC_SCHOLAR_DEFAULT,
             description="Enable academic paper searching via Semantic Scholar API"
         )
+        SEMANTIC_SCHOLAR_API_KEY: Optional[str] = Field(
+            default=config.SEMANTIC_SCHOLAR_API_KEY,
+            description="Semantic Scholar API Key for high rate limits (https://www.semanticscholar.org/product/api)"
+        )
         MAX_RESULTS_PER_DOMAIN: Optional[int] = Field(
             default=config.MAX_RESULTS_PER_DOMAIN,
             description="Maximum paper results to retrieve per sub-agent domain"
@@ -107,6 +111,10 @@ class Pipeline:
             import src.auth.ezproxy_session
             import src.auth.afeka_sso
             import src.auth.sso_login
+            import src.fetchers.semantic_scholar_fetcher
+            import src.fetchers.scholar_fetcher
+            import src.fetchers.ieee_fetcher
+            import src.fetchers.arxiv_fetcher
             import src.fetchers.citation_enricher
             import src.fetchers.github_finder
             import src.core.pipeline_runner
@@ -119,6 +127,10 @@ class Pipeline:
             importlib.reload(src.auth.ezproxy_session)
             importlib.reload(src.auth.afeka_sso)
             importlib.reload(src.auth.sso_login)
+            importlib.reload(src.fetchers.semantic_scholar_fetcher)
+            importlib.reload(src.fetchers.scholar_fetcher)
+            importlib.reload(src.fetchers.ieee_fetcher)
+            importlib.reload(src.fetchers.arxiv_fetcher)
             importlib.reload(src.fetchers.citation_enricher)
             importlib.reload(src.fetchers.github_finder)
             importlib.reload(src.telemetry)
@@ -172,6 +184,10 @@ class Pipeline:
         enable_scholar = config.ENABLE_SCHOLAR_DEFAULT if self.valves.ENABLE_SCHOLAR is None else self.valves.ENABLE_SCHOLAR
         enable_arxiv = config.ENABLE_ARXIV_DEFAULT if self.valves.ENABLE_ARXIV is None else self.valves.ENABLE_ARXIV
         enable_semantic_scholar = config.ENABLE_SEMANTIC_SCHOLAR_DEFAULT if self.valves.ENABLE_SEMANTIC_SCHOLAR is None else self.valves.ENABLE_SEMANTIC_SCHOLAR
+        s2_key = (self.valves.SEMANTIC_SCHOLAR_API_KEY or "").strip()
+        if s2_key:
+            os.environ["SEMANTIC_SCHOLAR_API_KEY"] = s2_key
+            config.SEMANTIC_SCHOLAR_API_KEY = s2_key
         max_results = config.MAX_RESULTS_PER_DOMAIN if not self.valves.MAX_RESULTS_PER_DOMAIN else self.valves.MAX_RESULTS_PER_DOMAIN
         ezproxy_cookie = "" if not self.valves.EZPROXY_COOKIE else self.valves.EZPROXY_COOKIE
         ezproxy_domain = config.EZPROXY_DOMAIN_DEFAULT if not self.valves.EZPROXY_DOMAIN else self.valves.EZPROXY_DOMAIN

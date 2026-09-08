@@ -61,6 +61,28 @@ t2m-research-agent/
 
 ## Architectural Decision Log
 
+### 2026-09-08: Academic Paper Discovery & Hybrid Ranking Engine (`academic_ranking_engine`)
+- **Goal**: Implement a production-grade Python package (`academic_ranking_engine`) designed to fetch, filter, rank, and balance academic papers from scholarly APIs (Semantic Scholar Graph API with ArXiv fallback), solving citation-lag bias and cross-domain pollution.
+- **Architectural Components & Implementation**:
+  1. **Data Models (`models.py`)**: Pydantic v2 `Author` and `PaperMetadata` schemas with calculated properties for publication age ($\Delta t$), citation velocity ($V_{cit}$), and open-source availability (`has_code`).
+  2. **Venue Tier Classifier (`venue_classifier.py`)**: Rule-based regex and normalized string matcher assigning venue tiers: Tier 1 ($W_{venue} = 2.0\times$), Tier 2 ($1.35\times$), Tier 3 ($1.0\times$), and Preprints ($0.85\times$).
+  3. **Scoring Engine (`scorer.py`)**: Mathematically rigorous non-linear scoring applying $S_{SOTA} = W_{venue} \cdot (1.2 \cdot V_{cit} + 0.5 \cdot \text{InflCit}) + B_{code} + B_{oa} + B_{author}$ for recent works ($\Delta t \le 2.0$) and $S_{Found} = W_{venue} \cdot [0.8 \cdot \ln(1 + C_{cit}) + 0.4 \cdot \text{InflCit}] + \dots$ for historical baselines ($\Delta t > 2.0$).
+  4. **Async Scholar Client (`client.py`)**: Asynchronous `httpx` client with domain locking (`Computer Science, Engineering`), unauthenticated bulk search optimization, and automated ArXiv fallback.
+  5. **Dual-Bucket Discovery Engine (`discovery_engine.py`)**: Orchestrates 35% Foundational / 65% SOTA ratio blending, cross-stream deduplication via normalized titles, sub-query decomposition for multi-faceted keyword queries, and zero-citation preprint rescue.
+  6. **Interactive CLI Demo (`demo.py`)**: Rich color-coded terminal dashboard displaying ranked publications, venue tiers, citation velocities, and score breakdowns.
+  7. **Modular Constraints**: All module files maintained under 200 lines with standalone `if __name__ == '__main__':` test runners and `dmitryx:dmitryx` host ownership.
+
+### 2026-09-08: Semantic Scholar Resilience, 429 Rate-Limit Mitigation & Bulk Search Fallback
+- **Goal**: Resolve HTTP 429 throttling on Semantic Scholar API that caused Kinematic and Pose/Vision sub-agents to retrieve 0 papers in unauthenticated mode, add official API key authentication, implement adaptive exponential backoff with `Retry-After` header parsing, and add seamless bulk search fallback.
+- **Root Causes & Key Changes**:
+  1. **HTTP 429 Rate Limiting & Retry Cool-Down**: Fixed flat 5s sleep in `semantic_scholar_fetcher.py`. Introduced adaptive backoff (`[4s, 8s, 14s]`) and dynamic parsing of the `Retry-After` header returned by CloudFront/API Gateway.
+  2. **Unauthenticated Strategy — Direct Bulk Search**: CloudFront aggressively throttles `/graph/v1/paper/search` for unauthenticated IPs with HTTP 429, but `/graph/v1/paper/search/bulk` offers high throughput without aggressive throttling. In unauthenticated mode, the fetcher queries Bulk Search directly, completely circumventing 429 errors.
+  3. **Bulk Search `tldr` Incompatibility Fix**: Removed `tldr` from `S2_FIELDS`. Semantic Scholar's `/paper/search/bulk` endpoint strictly rejects `tldr` with `HTTP 400: {"error":"Unrecognized or unsupported fields: [tldr]"}`, which previously caused the fallback to fail silently.
+  4. **OpenWebUI Pipeline Dynamic Reloading**: Added `src.fetchers.semantic_scholar_fetcher`, `scholar_fetcher`, `ieee_fetcher`, and `arxiv_fetcher` to the `importlib.reload(...)` block in `openwebui/t2m_pipeline.py`, ensuring containerized OpenWebUI instances immediately execute refreshed code without container restarts.
+  5. **Official API Key Authentication (`SEMANTIC_SCHOLAR_API_KEY`)**: Centralized API key configuration in `agent_config.py`, `.env`, `.env.example`, and OpenWebUI Valves, transmitting `x-api-key` headers to grant high-throughput access.
+  6. **Relaxed Citation Filtering**: Changed default `min_citations` from `2` to `0` (configurable via `SEMANTIC_SCHOLAR_MIN_CITATIONS`), preventing recent (2023–2026) high-value publications from being dropped.
+  7. **Pipeline Runner Scholar Integration**: Fixed missing `enable_scholar` branch in `src/core/pipeline_runner.py`'s `fetch_papers_for_domain` loop, ensuring Google Scholar (OpenAlex/Crossref) executes when enabled.
+
 ### 2026-09-07: Resilient Institutional Authentication, Session Persistence & 2FA Elimination
 - **Goal**: Eliminate repeated 2FA (mobile fingerprint/push approval) prompts on every pipeline run, prevent stale cookie shadowing, auto-synchronize live session tokens back to disk, and sanitize tracking/ephemeral tokens.
 - **Root Causes & Key Changes**:

@@ -8,6 +8,7 @@ import agent_config as config
 from src.utils.logger import logger
 from src.telemetry import get_telemetry, TelemetryManager
 from src.fetchers.ieee_fetcher import fetch_ieee_papers
+from src.fetchers.scholar_fetcher import fetch_google_scholar_papers
 from src.fetchers.arxiv_fetcher import fetch_arxiv_papers
 from src.fetchers.semantic_scholar_fetcher import fetch_semantic_scholar_papers
 from src.fetchers.citation_enricher import enrich_literature_review
@@ -201,6 +202,10 @@ def execute_t2m_research(
             time.sleep(1.2)
             if enable_ieee:
                 res = fetch_ieee_papers(term, max_results=max_results_per_domain, ezproxy_domain=ezproxy_domain)
+                if res:
+                    papers.extend(res)
+            if enable_scholar and len(papers) < max_results_per_domain:
+                res = fetch_google_scholar_papers(term, max_results=max_results_per_domain, ezproxy_domain=ezproxy_domain)
                 if res:
                     papers.extend(res)
             if enable_arxiv and len(papers) < max_results_per_domain:

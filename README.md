@@ -40,6 +40,14 @@ Includes multi-fetcher academic search across **Google Scholar**, **IEEE Xplore*
 
 ```text
 t2m-research-agent/
+├── academic_ranking_engine/      # HYBRID SCHOLARLY DISCOVERY & RANKING ENGINE
+│   ├── __init__.py               # Package exports & public API
+│   ├── models.py                 # Pydantic v2 Author & PaperMetadata schemas
+│   ├── venue_classifier.py       # Venue Prestige Tiering (Tiers 1-4)
+│   ├── scorer.py                 # Non-linear SOTA & Foundational scoring formulas
+│   ├── client.py                 # Async Semantic Scholar & ArXiv client with backoff
+│   ├── discovery_engine.py       # Dual-Bucket Blending & Sub-query Expansion
+│   └── demo.py                   # Rich CLI demo runner with interactive tables
 ├── src/                          # CORE PYTHON SYSTEM
 │   ├── auth/                     # INSTITUTIONAL AUTHENTICATION & EZPROXY
 │   │   ├── __init__.py           # Package exports
@@ -107,6 +115,8 @@ cp .env.example .env
 - `MODEL_NAME`: Target model (defaults to `anthropic/claude-3.5-sonnet`).
 - `MAX_RESULTS_PER_DOMAIN`: Search limit per domain (defaults to `5`).
 - `ENABLE_IEEE`, `ENABLE_SCHOLAR`, `ENABLE_ARXIV`, `ENABLE_SEMANTIC_SCHOLAR`: Boolean fetcher toggles.
+- `SEMANTIC_SCHOLAR_API_KEY`: Optional API Key for Semantic Scholar high rate limits.
+- `SEMANTIC_SCHOLAR_MIN_CITATIONS`: Minimum citations threshold for Semantic Scholar (defaults to `0`).
 - `DEFAULT_SEARCH_QUERY`: Default prompt fallback.
 - `DEFAULT_OUTPUT_FILE`: Master report path (defaults to `LITERATURE_REVIEW.md`).
 - `IEEE_INSTITUTION`, `IEEE_USERNAME`, `IEEE_PASSWORD`: Institutional credentials for automated 2FA login.
@@ -182,6 +192,36 @@ The framework automatically verifies peer-review integrity and code availability
    python3 -m src.fetchers.citation_enricher
    python3 -m src.fetchers.github_finder
    ```
+
+---
+
+## 🔬 Academic Paper Discovery & Hybrid Ranking Engine (`academic_ranking_engine`)
+
+A standalone, production-ready module designed to eliminate citation-lag bias and cross-domain pollution when querying scholarly APIs.
+
+### Key Capabilities
+1. **Dual-Bucket Retrieval Architecture:**
+   - **Stream A (Foundational Baselines, ~35%):** Prioritizes seminal, historical high-impact publications ($\Delta t > 2.0\text{ yrs}$) using logarithmic citation weighting and venue prestige.
+   - **Stream B (Frontier / SOTA, ~65%):** Surfaces recent breakthrough papers ($\Delta t \le 2.0\text{ yrs}$) using citation velocity ($V_{cit} = C_{cit} / \Delta t$), verified code availability ($B_{code} = 15$), and open-access bonuses ($B_{oa} = 3$).
+2. **Venue Prestige Classifier (`venue_classifier.py`):**
+   - Maps venues via canonical aliases and regex:
+     - **Tier 1 ($W_{venue} = 2.0\times$):** CVPR, ICCV, ECCV, NeurIPS, ICML, ICLR, SIGGRAPH, TOG, IEEE TPAMI, IJCV, RA-L, TRO, RSS, ICRA.
+     - **Tier 2 ($W_{venue} = 1.35\times$):** WACV, BMVC, 3DV, IROS, PR, CVIU.
+     - **Tier 3 ($W_{venue} = 1.0\times$):** Other peer-reviewed conferences & journals.
+     - **Preprints ($W_{venue} = 0.85\times$):** arXiv and unreviewed preprints.
+3. **Zero-Citation Preprint Rescue:**
+   - Recent arXiv preprints with high citation velocity or open-source GitHub code are rescued and boosted into top positions rather than filtered out.
+4. **Sub-Query Expansion & ArXiv Fallback:**
+   - Decomposes complex multi-faceted queries (e.g., `"monocular 3d human pose physics diffusion"`) into targeted sub-queries (`"monocular 3d human pose physics"`, `"monocular 3d human pose diffusion"`, etc.) to circumvent full-text intersection throttling on Semantic Scholar bulk endpoints, with automated ArXiv query fallback.
+
+### Running the Discovery Engine Demo
+```bash
+# Default demo query
+python3 -m academic_ranking_engine.demo "monocular 3d human pose physics diffusion"
+
+# Custom query
+python3 -m academic_ranking_engine.demo "reinforcement learning humanoid physics control"
+```
 
 ---
 
