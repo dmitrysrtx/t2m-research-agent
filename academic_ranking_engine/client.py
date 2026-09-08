@@ -18,21 +18,19 @@ S2_DEFAULT_FIELDS = (
     "fieldsOfStudy,authors"
 )
 
-GITHUB_REGEX = re.compile(r"https?://github\.com/([a-zA-Z0-9_\-\.]+)/([a-zA-Z0-9_\-\.]+)", re.IGNORECASE)
-
-
-def extract_code_url(text: Optional[str]) -> Optional[str]:
-    """Extracts and canonicalizes GitHub code repository link from text."""
-    if not text:
+try:
+    from src.fetchers.github_finder import extract_github_url as extract_code_url
+except ImportError:
+    GITHUB_REGEX = re.compile(r"https?://github\.com/([a-zA-Z0-9_\-]+)/([a-zA-Z0-9_\-\.]+)", re.IGNORECASE)
+    def extract_code_url(text: Optional[str]) -> Optional[str]:
+        if not text:
+            return None
+        match = GITHUB_REGEX.search(text)
+        if match:
+            owner, repo = match.group(1), match.group(2).rstrip(".,;!?:)'\"").removesuffix(".git")
+            if owner.lower() not in ["features", "topics", "pulls", "issues"]:
+                return f"https://github.com/{owner}/{repo}"
         return None
-    match = GITHUB_REGEX.search(text)
-    if match:
-        owner, repo = match.group(1), match.group(2).rstrip(".,;!?:)'\"")
-        if repo.endswith(".git"):
-            repo = repo[:-4]
-        if owner.lower() not in ["features", "topics", "pulls", "issues"]:
-            return f"https://github.com/{owner}/{repo}"
-    return None
 
 
 class AcademicSearchClient:

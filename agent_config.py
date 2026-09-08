@@ -28,6 +28,14 @@ SEMANTIC_SCHOLAR_MIN_CITATIONS = int(os.getenv("SEMANTIC_SCHOLAR_MIN_CITATIONS",
 DEFAULT_OUTPUT_FILE = os.getenv("DEFAULT_OUTPUT_FILE", "LITERATURE_REVIEW.md")
 
 # ==============================================================================
+# GitHub & Code Verification Controls ("Code-First" Mode)
+# ==============================================================================
+REQUIRE_CODE_DEFAULT = os.getenv("REQUIRE_CODE", "False").lower() == "true"
+PREFER_CODE_DEFAULT = os.getenv("PREFER_CODE", "True").lower() == "true"
+CODE_ARTIFACT_SCORE_BOOST = float(os.getenv("CODE_SCORE_BOOST", "35.0"))
+SEMANTIC_SCHOLAR_FIELDS_OF_STUDY = os.getenv("SEMANTIC_SCHOLAR_FIELDS_OF_STUDY", "Computer Science,Engineering")
+
+# ==============================================================================
 # Institutional & EZproxy Defaults
 # ==============================================================================
 EZPROXY_DOMAIN_DEFAULT = os.getenv("EZPROXY_DOMAIN", "ezproxy.afeka.ac.il")

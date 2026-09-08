@@ -9,11 +9,12 @@ def fetch_arxiv_papers(query=config.DEFAULT_SEARCH_QUERY, max_results=config.MAX
     Fetches paper metadata from the ArXiv API, sorted by relevance to find high-impact core papers.
     """
     logger.info(f"[*] Searching ArXiv for query: '{query}'...")
-    url = f'http://export.arxiv.org/api/query?search_query=all:{urllib.parse.quote(query)}&start=0&max_results={max_results}&sortBy=relevance&sortOrder=descending'
+    url = f'https://export.arxiv.org/api/query?search_query=all:{urllib.parse.quote(query)}&start=0&max_results={max_results}&sortBy=relevance&sortOrder=descending'
     
     papers = []
     try:
-        data = urllib.request.urlopen(url)
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        data = urllib.request.urlopen(req, timeout=15)
         xml_data = data.read().decode('utf-8')
         root = ET.fromstring(xml_data)
         

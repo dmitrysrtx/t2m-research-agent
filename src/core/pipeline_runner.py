@@ -12,7 +12,7 @@ from src.fetchers.scholar_fetcher import fetch_google_scholar_papers
 from src.fetchers.arxiv_fetcher import fetch_arxiv_papers
 from src.fetchers.semantic_scholar_fetcher import fetch_semantic_scholar_papers
 from src.fetchers.citation_enricher import enrich_literature_review
-from src.fetchers.github_finder import enrich_papers_with_github
+from src.fetchers.github_finder import enrich_papers_with_github, resolve_paper_github
 from src.utils.pdf_downloader import download_pdfs
 from src.auth import (
     prompt_auth_instructions_if_needed,
@@ -79,7 +79,11 @@ def extract_core_keywords(query: str) -> str:
     cleaned_lower = cleaned.lower()
     meta_phrases = [
         "perform a comprehensive academic literature review on",
+        "perform a comprehensive literature review on",
         "perform a literature review on",
+        "conduct a comprehensive literature review on",
+        "conduct a literature review on",
+        "write a comprehensive literature review on",
         "write a literature review on",
         "focus on peer-reviewed ieee publications",
         "analyze and evaluate across the following four core dimensions",
@@ -101,8 +105,72 @@ def extract_core_keywords(query: str) -> str:
     if core_terms:
         return " ".join(core_terms)
 
-    clean_words = [w for w in re.sub(r'[^a-zA-Z0-9\s-]', '', cleaned_lower).split() if len(w) > 2]
+    meta_words = {"perform", "write", "conduct", "review", "literature", "academic", "comprehensive", "dimensions", "focus"}
+    clean_words = [w for w in re.sub(r'[^a-zA-Z0-9\s-]', '', cleaned_lower).split() if len(w) > 2 and w.lower() not in meta_words]
     return " ".join(clean_words[:5]) if clean_words else config.DEFAULT_SEARCH_QUERY
+
+
+def sanitize_markdown_table_github_urls(table_text: str, verified_urls: set) -> str:
+    """Enforces that only verified GitHub URLs appear in tables, replacing dead/hallucinated links with N/A."""
+    if not table_text:
+        return table_text
+    clean_verified = {u.rstrip("/").lower() for u in verified_urls if u and u != "N/A"}
+
+    def _replace_link(match):
+        full_text = match.group(0)
+        url = match.group(2).rstrip("/").lower()
+        if url.startswith("https://github.com/") and url not in clean_verified:
+            return "N/A"
+        return full_text
+
+    return re.sub(r'\[([^\]]+)\]\((https?://github\.com/[^\)\s]+)\)', _replace_link, table_text)
+
+
+def rank_and_filter_candidates(
+    candidates: list,
+    max_results: int,
+    require_code: bool = False,
+    prefer_code: bool = True,
+    session: Optional[object] = None
+) -> list:
+    """
+    Ranks candidates by code availability, citations, and influential citations.
+    Enforces 'Code-First' selection according to require_code / prefer_code flags.
+    """
+    if not candidates:
+        return []
+
+    for p in candidates:
+        if "github_url" not in p or p["github_url"] in ("N/A", "", None):
+            gh_url = resolve_paper_github(p, session=session)
+            p["github_url"] = gh_url if gh_url else "N/A"
+
+        has_code = p.get("github_url") and p.get("github_url") != "N/A"
+        boost = getattr(config, "CODE_ARTIFACT_SCORE_BOOST", 35.0) if has_code else 0.0
+        cit = p.get("citations") or 0
+        inf = p.get("influential_citations") or 0
+        p["score"] = boost + cit + (inf * 2.0)
+
+    if require_code:
+        code_candidates = [p for p in candidates if p.get("github_url") and p.get("github_url") != "N/A"]
+        if code_candidates:
+            selected = sorted(code_candidates, key=lambda x: x.get("score", 0), reverse=True)
+        else:
+            logger.warning("[!] No code-bearing papers found for domain under require_code=True. Falling back to top cited papers.")
+            selected = sorted(candidates, key=lambda x: x.get("score", 0), reverse=True)
+    elif prefer_code:
+        selected = sorted(
+            candidates,
+            key=lambda x: (
+                1 if (x.get("github_url") and x.get("github_url") != "N/A") else 0,
+                x.get("score", 0)
+            ),
+            reverse=True
+        )
+    else:
+        selected = sorted(candidates, key=lambda x: x.get("score", 0), reverse=True)
+
+    return selected[:max_results]
 
 
 def execute_t2m_research(
@@ -112,6 +180,8 @@ def execute_t2m_research(
     enable_arxiv: bool = config.ENABLE_ARXIV_DEFAULT,
     enable_semantic_scholar: bool = config.ENABLE_SEMANTIC_SCHOLAR_DEFAULT,
     max_results_per_domain: int = config.MAX_RESULTS_PER_DOMAIN,
+    require_code: bool = config.REQUIRE_CODE_DEFAULT,
+    prefer_code: bool = config.PREFER_CODE_DEFAULT,
     ezproxy_cookie: str = "",
     ezproxy_domain: str = config.EZPROXY_DOMAIN_DEFAULT,
     kinematic_prompt: str = None,
@@ -193,38 +263,53 @@ def execute_t2m_research(
         ],
     }
 
-    # 1. FETCH PAPERS
+    # 1. FETCH & RANK PAPERS (CODE-FIRST)
     def fetch_papers_for_domain(domain_key: str):
-        papers = []
+        candidate_pool_size = max(max_results_per_domain * 2, 8)
+        raw_candidates = []
+        seen_keys = set()
         query_terms = domains.get(domain_key, [clean_query])
-        
+
         for term in query_terms:
-            time.sleep(1.2)
+            time.sleep(1.0)
+            batch = []
             if enable_ieee:
                 res = fetch_ieee_papers(term, max_results=max_results_per_domain, ezproxy_domain=ezproxy_domain)
                 if res:
-                    papers.extend(res)
-            if enable_scholar and len(papers) < max_results_per_domain:
+                    batch.extend(res)
+            if enable_scholar and (len(raw_candidates) + len(batch)) < candidate_pool_size:
                 res = fetch_google_scholar_papers(term, max_results=max_results_per_domain, ezproxy_domain=ezproxy_domain)
                 if res:
-                    papers.extend(res)
-            if enable_arxiv and len(papers) < max_results_per_domain:
+                    batch.extend(res)
+            if enable_arxiv and (len(raw_candidates) + len(batch)) < candidate_pool_size:
                 res = fetch_arxiv_papers(term, max_results=max_results_per_domain)
                 if res:
-                    papers.extend(res)
-            if enable_semantic_scholar and len(papers) < max_results_per_domain:
+                    batch.extend(res)
+            if enable_semantic_scholar and (len(raw_candidates) + len(batch)) < candidate_pool_size:
                 res = fetch_semantic_scholar_papers(term, max_results=max_results_per_domain)
                 if res:
-                    papers.extend(res)
-                    
-            if len(papers) >= max_results_per_domain:
-                break
-                
-        return papers[:max_results_per_domain]
+                    batch.extend(res)
 
-    _notify("[1/4] Fetching papers across selected sources...")
+            for p in batch:
+                clean_t = re.sub(r'[^a-zA-Z0-9]', '', p.get('title', '').lower())
+                if clean_t and clean_t not in seen_keys:
+                    seen_keys.add(clean_t)
+                    raw_candidates.append(p)
+
+            if len(raw_candidates) >= candidate_pool_size:
+                break
+
+        return rank_and_filter_candidates(
+            raw_candidates,
+            max_results=max_results_per_domain,
+            require_code=require_code,
+            prefer_code=prefer_code,
+            session=manager.get_session()
+        )
+
+    _notify(f"[1/4] Fetching & ranking papers across sources (Code-First={prefer_code or require_code})...")
     tm.tool_call("fetch_papers", args=f"Domains: {list(domains.keys())}", source="fetcher")
-    
+
     kinematic_papers = fetch_papers_for_domain("kinematic")
     physics_papers = fetch_papers_for_domain("physics")
     rl_papers = fetch_papers_for_domain("rl")
@@ -267,25 +352,41 @@ def execute_t2m_research(
         status_callback=_notify
     )
     tm.tool_result("find_github_repos", result=f"Discovered {gh_count} GitHub repositories", source="github_finder")
+    verified_gh_urls = {p.get("github_url") for p in unique_papers if p.get("github_url") and p.get("github_url") != "N/A"}
 
     # 3. SUB-AGENTS ANALYSIS
     _notify("[3/4] Engaging AI Expert Sub-Agents...")
     tm.thinking("Engaging AI Expert Sub-Agents across 4 domains", source="orchestrator")
-    kinematic_result = analyze_kinematic(kinematic_papers, custom_prompt=kinematic_prompt, telemetry=tm)
-    physics_result = analyze_physics_diffusion(physics_papers, custom_prompt=physics_prompt, telemetry=tm)
-    rl_result = analyze_rl_control(rl_papers, custom_prompt=rl_prompt, telemetry=tm)
-    pose_result = analyze_pose_vision(pose_papers, custom_prompt=pose_prompt, telemetry=tm)
+    kinematic_result = sanitize_markdown_table_github_urls(
+        analyze_kinematic(kinematic_papers, custom_prompt=kinematic_prompt, telemetry=tm),
+        verified_gh_urls
+    )
+    physics_result = sanitize_markdown_table_github_urls(
+        analyze_physics_diffusion(physics_papers, custom_prompt=physics_prompt, telemetry=tm),
+        verified_gh_urls
+    )
+    rl_result = sanitize_markdown_table_github_urls(
+        analyze_rl_control(rl_papers, custom_prompt=rl_prompt, telemetry=tm),
+        verified_gh_urls
+    )
+    pose_result = sanitize_markdown_table_github_urls(
+        analyze_pose_vision(pose_papers, custom_prompt=pose_prompt, telemetry=tm),
+        verified_gh_urls
+    )
 
     # 4. MASTER ORCHESTRATOR SYNTHESIS
     _notify("[4/4] Engaging Master Orchestrator for literature synthesis...")
     tm.thinking("Synthesizing master literature review chapter", source="orchestrator")
-    final_review = synthesize_literature_review(
-        kinematic_result,
-        physics_result,
-        rl_result,
-        pose_result,
-        custom_prompt=orchestrator_prompt,
-        telemetry=tm
+    final_review = sanitize_markdown_table_github_urls(
+        synthesize_literature_review(
+            kinematic_result,
+            physics_result,
+            rl_result,
+            pose_result,
+            custom_prompt=orchestrator_prompt,
+            telemetry=tm
+        ),
+        verified_gh_urls
     )
 
     # Build response for Open WebUI & File Saving
@@ -344,6 +445,26 @@ if __name__ == "__main__":
     print("==================================================")
     print("🔬 Pipeline Runner Standalone Health Check")
     print("==================================================")
+    # Validate table sanitizer
+    test_raw = "| Paper | [Valid](https://github.com/wuyan01/UniPhys) | [Dead](https://github.com/QianChen113/RetinaDiff) |"
+    test_sanitized = sanitize_markdown_table_github_urls(test_raw, {"https://github.com/wuyan01/UniPhys"})
+    assert test_sanitized.count("https://github.com/wuyan01/UniPhys") == 1
+    assert "QianChen113" not in test_sanitized
+    assert "N/A" in test_sanitized
+    print("[*] Table Sanitizer Validation: PASSED")
+
+    # Validate code-first candidate ranking
+    mock_candidates = [
+        {"title": "Random Theoretical Analysis of Nonexistent Topic 9999", "citations": 500, "influential_citations": 50, "github_url": "N/A"},
+        {"title": "Paper With Code", "citations": 100, "influential_citations": 10, "github_url": "https://github.com/GuyTevet/motion-diffusion-model"},
+    ]
+    ranked_prefer = rank_and_filter_candidates(list(mock_candidates), max_results=2, prefer_code=True)
+    assert ranked_prefer[0]["title"] == "Paper With Code"
+    ranked_require = rank_and_filter_candidates(list(mock_candidates), max_results=2, require_code=True)
+    assert len(ranked_require) == 1
+    assert ranked_require[0]["title"] == "Paper With Code"
+    print("[*] Code-First Candidate Ranking Validation: PASSED")
+
     manager = EZProxyManager()
     status = manager.check_status()
     print(f"[*] Auth Status: {status['message']}")

@@ -48,12 +48,19 @@ def run_agent(system_prompt, user_prompt, agent_name="sub_agent", telemetry=None
         tm.error(f"Execution error: {str(e)}", source=agent_name, duration=duration)
         return f"[!] Agent Error: {str(e)}"
 
+import re
+
 def format_papers_for_prompt(papers_data):
     prompt = f"Analyze the following {len(papers_data)} papers:\n\n"
     for i, p in enumerate(papers_data):
         citations = p.get('citations', 'N/A')
         impact_factor = p.get('impact_factor', 'N/A')
         github_url = p.get('github_url', 'N/A')
+        abstract_text = p.get('abstract', 'N/A')
+        if not github_url or github_url == 'N/A':
+            # Strip dead or unverified repository URLs from abstract to prevent LLM hallucination
+            abstract_text = re.sub(r'https?://(?:www\.)?github\.com/[^\s\)\],;]+', '', abstract_text)
+            abstract_text = re.sub(r'https?://[a-zA-Z0-9_\-\.]+\.github\.io/[^\s\)\],;]+', '', abstract_text)
         prompt += (
             f"--- Paper {i+1} ---\n"
             f"Title: {p.get('title', 'N/A')} ({p.get('year', 'N/A')})\n"
@@ -61,18 +68,21 @@ def format_papers_for_prompt(papers_data):
             f"Impact Factor / Rank: {impact_factor}\n"
             f"GitHub Code Repo: {github_url}\n"
             f"URL: {p.get('url', 'N/A')}\n"
-            f"Abstract: {p.get('abstract', 'N/A')}\n\n"
+            f"Abstract: {abstract_text}\n\n"
         )
     return prompt
 
-ANTI_LAZY_RULE = "\nCRITICAL INSTRUCTION: You MUST include EVERY single paper provided in the input text in your table. Do not skip, summarize, or omit ANY paper. If there are 15 papers in the prompt, there must be 15 rows in your table!"
+ANTI_LAZY_RULE = (
+    "\nCRITICAL INSTRUCTION: You MUST include EVERY single paper provided in the input text in your table. Do not skip, summarize, or omit ANY paper. If there are 15 papers in the prompt, there must be 15 rows in your table!\n"
+    "CRITICAL GITHUB RULE: For the 'Code Repository (GitHub)' column, you MUST STRICTLY use the exact value from 'GitHub Code Repo:' in paper metadata. If 'GitHub Code Repo:' is 'N/A', you MUST write 'N/A'. Do NOT extract or guess repositories from abstract text!"
+)
 
 # Default System Prompts
 KINEMATIC_SYSTEM_PROMPT = """
 You are a highly specialized AI research agent analyzing kinematic Text-to-Motion models.
 Extract core information from the provided abstracts and return a structured Markdown table.
 Format the "Paper Title & Year" column as a Markdown hyperlink: [Title (Year)](URL).
-Format the "Code Repository (GitHub)" column as a Markdown hyperlink if a valid URL is provided, or "N/A" if unavailable.
+Format the "Code Repository (GitHub)" column as a Markdown hyperlink ONLY if a verified URL is provided in "GitHub Code Repo:", or "N/A" if it says "N/A".
 Columns: | Paper Title & Year | Citations | Impact Factor | Code Repository (GitHub) | Architecture (Diffusion/GPT) | Pose Skeleton Used | Key Metrics (FID, etc.) | Limitations |
 Limit response to ONLY the table.""" + ANTI_LAZY_RULE
 
@@ -80,7 +90,7 @@ PHYSICS_DIFFUSION_SYSTEM_PROMPT = """
 You are an expert in Physics-Guided Generative Motion Models.
 Extract core information from the provided abstracts and return a structured Markdown table.
 Format the "Paper Title & Year" column as a Markdown hyperlink: [Title (Year)](URL).
-Format the "Code Repository (GitHub)" column as a Markdown hyperlink if a valid URL is provided, or "N/A" if unavailable.
+Format the "Code Repository (GitHub)" column as a Markdown hyperlink ONLY if a verified URL is provided in "GitHub Code Repo:", or "N/A" if it says "N/A".
 Columns: | Paper Title & Year | Citations | Impact Factor | Code Repository (GitHub) | Physics Integration Method | Physics Engine (MuJoCo/Isaac) | Physical Metrics | Limitations |
 Limit response to ONLY the table.""" + ANTI_LAZY_RULE
 
@@ -88,7 +98,7 @@ RL_CONTROL_SYSTEM_PROMPT = """
 You are an expert specializing in Reinforcement Learning for physics-based character control.
 Extract core information from the provided abstracts and return a structured Markdown table.
 Format the "Paper Title & Year" column as a Markdown hyperlink: [Title (Year)](URL).
-Format the "Code Repository (GitHub)" column as a Markdown hyperlink if a valid URL is provided, or "N/A" if unavailable.
+Format the "Code Repository (GitHub)" column as a Markdown hyperlink ONLY if a verified URL is provided in "GitHub Code Repo:", or "N/A" if it says "N/A".
 Columns: | Paper Title & Year | Citations | Impact Factor | Code Repository (GitHub) | RL Algorithm (PPO, etc.) | Reward Function Components | Simulation Environment | Limitations |
 Limit response to ONLY the table.""" + ANTI_LAZY_RULE
 
@@ -96,7 +106,7 @@ MEDIAPIPE_POSE_SYSTEM_PROMPT = """
 You are an expert in computer vision, 3D pose estimation, and vision-to-pose bridging.
 Extract core information from the provided abstracts and return a structured Markdown table.
 Format the "Paper Title & Year" column as a Markdown hyperlink: [Title (Year)](URL).
-Format the "Code Repository (GitHub)" column as a Markdown hyperlink if a valid URL is provided, or "N/A" if unavailable.
+Format the "Code Repository (GitHub)" column as a Markdown hyperlink ONLY if a verified URL is provided in "GitHub Code Repo:", or "N/A" if it says "N/A".
 Columns: | Paper Title & Year | Citations | Impact Factor | Code Repository (GitHub) | Pose Representation (MediaPipe/SMPL) | Translation Mechanism | Robustness to Noise | Limitations |
 Limit response to ONLY the table.""" + ANTI_LAZY_RULE
 

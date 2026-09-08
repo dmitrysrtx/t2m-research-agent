@@ -30,6 +30,12 @@
   "__uzmf": "7f90000c1ea621-8d8b-422d-875f-e115a8ae59b01-17888550168590-0041c18c5e90cd1de4f10",
   "uzmx": "7fc000f4fe22ce-e603-410c-a007-f8a3b6fdebea1-17888550168590-004471f19f71290c97810",
   "PHPSESSID": "o85rdkmfh28he9crjqfglbmreg",
-  "cosession": "6a9fe7cd8579f7-22128764-m",
-  "6dac2f63-9497-4512-a3d3-02517610e82d": "f8a18edd918a3472c9a50aa4755a3267"
+  "cosession": "6aa014f5284e80-90748651-m",
+  "6dac2f63-9497-4512-a3d3-02517610e82d": "17da4a1b5553bcbed1317a0a1ee6fa4b",
+  "idp_session": "sVERSION_1d0175142-867c-4c0d-86c9-e6df934e079e",
+  "idp_session_http": "hVERSION_1a4e6340f-d3c9-4978-a40a-eec5af1235b2",
+  "idp_marker": "0aa421a7-e511-4801-9528-24f7c23ca7ea",
+  "CONTENT_USAGE_SESSIONID": "\"e56c0582-be49-49b0-9f88-5b65907624ea\"",
+  "csrf-token": "\"v9RhIXoybEnlKNsVforiOMYwOpa58hCxjHKnUxH7NbM=\"",
+  "user.uuid.v2": "\"e3ed702e-b107-4a42-b127-a93220cb7b34\""
 }

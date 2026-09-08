@@ -19,20 +19,20 @@ Includes multi-fetcher academic search across **Google Scholar**, **IEEE Xplore*
      - `LITERATURE_REVIEW.md` (root directory)
    - Downloaded full-text PDF articles are stored cleanly in `articles/*.pdf`.
 
-3. **Multi-Tier GitHub Code Repository Discovery Engine:**
-   Automatically resolves and verifies open-source code repositories across all processed papers:
-   - **Tier 1 (Abstract & Metadata Regex):** Extracts `github.com/owner/repo` and `owner.github.io/repo` from abstract text and ArXiv `<arxiv:comment>` fields.
-   - **Tier 2 (Landing Page HTML Inspection):** Scans download landing pages (ArXiv, OpenAlex, publisher portals) during PDF acquisition.
-   - **Tier 3 (Targeted Search Fallback):** Queries GitHub Search API for paper titles with rate-limit protection.
-   - **Canonicalization:** Cleans trailing punctuation, strips branches/tree subpaths, and filters service URLs.
-   - **Table Integration:** Populates clickable Markdown hyperlinks into intermediate Sub-Agent tables, Master Review chapter, and Academic Credibility verification table.
+3. **Multi-Tier GitHub Code Repository Discovery & Verification Engine:**
+   Automatically resolves, verifies, and sanitizes open-source code repositories across all processed papers:
+   - **Tier 1 (Direct Text Regex):** Extracts `github.com/owner/repo` from abstract text and ArXiv `<arxiv:comment>` fields.
+   - **Tier 2 (Author Project Pages):** Resolves project sites (`*.github.io`) linked from abstract or comments to find repository links.
+   - **Tier 3 (ArXiv Resolution & Title Discovery):** Inspects ArXiv landing pages via `arxiv_id` or queries ArXiv API by paper title to resolve comments and project pages (e.g., UniPhys).
+   - **Tier 4 (Targeted Verified GitHub Search):** Searches GitHub API using clean title keywords with strict keyword overlap validation and 200 OK HTTP liveness checks (e.g., STRAPS BMVC 2020).
+   - **Zero-Tolerance Dead Link Sanitization:** Masks unverified/dead links (404) from LLM prompts and strictly sanitizes Sub-Agent and Orchestrator Markdown tables to ensure dead links never appear in reports.
 
 4. **Multi-Agent RAG Pipeline:**
    - **AI Sub-Agents:** *Kinematic Models, Physics & Diffusion, RL Character Control, 3D Pose Vision*.
    - **Master Orchestrator:** Synthesizes sub-agent reports into an academic Literature Review chapter with comparative tables and research gaps.
 
 5. **Open WebUI Pipelines & Valves Integration (`openwebui/`):**
-   - Configurable Valves for enabling/disabling fetchers (`ENABLE_IEEE`, `ENABLE_SCHOLAR`, `ENABLE_ARXIV`, `ENABLE_SEMANTIC_SCHOLAR`), adjusting paper counts, and customizing system prompts.
+   - Configurable Valves for enabling/disabling fetchers (`ENABLE_IEEE`, `ENABLE_SCHOLAR`, `ENABLE_ARXIV`, `ENABLE_SEMANTIC_SCHOLAR`), code-first paper selection (`REQUIRE_CODE`, `PREFER_CODE`), adjusting paper counts, and customizing system prompts.
 
 ---
 
@@ -62,7 +62,8 @@ t2m-research-agent/
 │   │   ├── ieee_fetcher.py       # IEEE Xplore & OpenAlex Metadata Search
 │   │   ├── arxiv_fetcher.py      # ArXiv Preprint Fetcher
 │   │   ├── semantic_scholar_fetcher.py # Semantic Scholar API
-│   │   ├── github_finder.py      # Multi-Tier GitHub Code Repository Discovery
+│   │   ├── github_verifier.py    # URL Normalization & HTTP Streaming Liveness Prober
+│   │   ├── github_finder.py      # Multi-Tier GitHub Code Repository Discovery Engine
 │   │   └── citation_enricher.py  # CrossRef & ArXiv Academic Credibility Enricher
 │   ├── agents/                   # LLM SYNTHESIS AGENTS
 │   │   ├── orchestrator.py       # Master Orchestrator LLM Agent
@@ -115,6 +116,10 @@ cp .env.example .env
 - `MODEL_NAME`: Target model (defaults to `anthropic/claude-3.5-sonnet`).
 - `MAX_RESULTS_PER_DOMAIN`: Search limit per domain (defaults to `5`).
 - `ENABLE_IEEE`, `ENABLE_SCHOLAR`, `ENABLE_ARXIV`, `ENABLE_SEMANTIC_SCHOLAR`: Boolean fetcher toggles.
+- `REQUIRE_CODE`: Strictly require verified open-source GitHub code repositories for all selected papers (defaults to `False`).
+- `PREFER_CODE`: Prefer and prioritize papers with verified open-source GitHub code repositories (defaults to `True`).
+- `CODE_SCORE_BOOST`: Ranking score boost awarded to papers with verified code (defaults to `35.0`).
+- `SEMANTIC_SCHOLAR_FIELDS_OF_STUDY`: Restrict Semantic Scholar queries to specific domains (defaults to `"Computer Science,Engineering"`).
 - `SEMANTIC_SCHOLAR_API_KEY`: Optional API Key for Semantic Scholar high rate limits.
 - `SEMANTIC_SCHOLAR_MIN_CITATIONS`: Minimum citations threshold for Semantic Scholar (defaults to `0`).
 - `DEFAULT_SEARCH_QUERY`: Default prompt fallback.
@@ -185,8 +190,9 @@ The framework automatically verifies peer-review integrity and code availability
    - Implements strict token matching (`>= 75%` overlap and length ratio verification) to prevent fuzzy title mismatches.
    - Eliminates generic placeholders (never outputs `"Peer-Reviewed Journal"`); marks unrefereed papers accurately as `"arXiv"` preprints.
 2. **Verified GitHub Code Discovery (`src/fetchers/github_finder.py`):**
-   - Discovers official code repositories from paper abstracts, ArXiv comments, and landing HTML.
-   - Verifies HTTP liveness (`status_code == 200`) via lightweight HEAD requests before attaching links, eliminating dead, deleted, or empty placeholder repositories. Outputs clean `N/A` when no authentic public repository exists.
+   - Discovers official code repositories directly from primary sources: paper abstracts, ArXiv comments, author project pages (`*.github.io`), and ArXiv landing HTML without relying on third-party aggregators.
+   - Verifies HTTP liveness via streaming GET with browser `User-Agent`, distinguishing between `200 OK` (verified live), `404 Not Found` (dead link/non-existent), and `403/429` (rate-limited by GitHub - preserved as valid candidate with warning).
+   - Cleans and canonicalizes URLs (strips query parameters, branch subpaths, and `.git` extensions).
 3. **Standalone Diagnostics:**
    ```bash
    python3 -m src.fetchers.citation_enricher

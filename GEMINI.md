@@ -32,11 +32,12 @@ t2m-research-agent/
     │   ├── import_cookies.py   # Interactive CLI cookie importer helper
     │   ├── playwright_login.py # Backward-compatible browser login alias
     │   └── sso_login.py        # Standalone SSO authentication runner
-    ├── fetchers/               # Layer 2: Metadata Fetchers & Citation Enrichment
+    ├── fetchers/                 # Layer 2: Metadata Fetchers & Citation Enrichment
     │   ├── arxiv_fetcher.py            # ArXiv API search fetcher
     │   ├── ieee_fetcher.py             # IEEE Xplore (OpenAlex / CrossRef / IEEE API) fetcher
     │   ├── scholar_fetcher.py          # Google Scholar (via OpenAlex) fetcher
     │   ├── semantic_scholar_fetcher.py # Semantic Scholar API fetcher
+    │   ├── github_verifier.py          # URL Normalization & Streaming Liveness Prober
     │   ├── github_finder.py            # Multi-Tier GitHub Code Repository Discovery Engine
     │   └── citation_enricher.py        # CrossRef & ArXiv Academic Credibility Enricher
     ├── agents/                 # Layer 3: Domain Agents & Synthesis
@@ -60,6 +61,46 @@ t2m-research-agent/
 ```
 
 ## Architectural Decision Log
+
+### 2026-09-08: Semantic Scholar Domain Filtering & Code-First Candidate Selection
+- **Goal**: Eliminate domain bleeding in academic search (e.g. non-CS disciplines such as sports medicine, cellular biology, and thermodynamics), prevent unranked 1970s database records from unauthenticated Bulk Search, and enforce "Code-First" candidate selection so papers with verified GitHub repositories are prioritized and placed into the top positions.
+- **Root Causes & Key Changes**:
+  1. **Domain Enforcement (`semantic_scholar_fetcher.py`)**: Explicitly passed `fieldsOfStudy="Computer Science,Engineering"` to all Semantic Scholar queries.
+  2. **Standard Search Authority & Adaptive Fallback**: Maintained `/graph/v1/paper/search` as the authoritative primary search endpoint with exponential backoff on 429. Demoted unranked Bulk Search to an emergency fallback and added post-sorting by `(year >= 2019, citations)` descending, guaranteeing high-impact CS papers are returned.
+  3. **Metadata Enrichment**: Added `influentialCitationCount` and `publicationVenue` to `S2_FIELDS`, mapping direct citation metrics and venue names into paper records.
+  4. **Code-First Candidate Pool Expansion (`pipeline_runner.py`)**: Expanded candidate retrieval per domain to `candidate_pool_size = max(max_results_per_domain * 2, 8)` across all enabled sources before truncation.
+  5. **Early Code Discovery & Candidate Scoring**: Resolved GitHub repositories for candidates early and scored candidates via `score = (CODE_ARTIFACT_SCORE_BOOST if has_code else 0.0) + citations + influential_citations * 2.0`. Enforced `prefer_code` (papers with code ranked first) and `require_code` (strictly code-bearing papers).
+  6. **Configuration & OpenWebUI Valves**: Added `REQUIRE_CODE`, `PREFER_CODE`, `CODE_SCORE_BOOST`, and `SEMANTIC_SCHOLAR_FIELDS_OF_STUDY` to `agent_config.py`, `.env`, `.env.example`, and exposed `REQUIRE_CODE` and `PREFER_CODE` in `openwebui/t2m_pipeline.py` Valves.
+  7. **File Length & Testability**: Kept `semantic_scholar_fetcher.py` at 159 lines, `pipeline_runner.py` modular, and validated all components with standalone test suites.
+
+### 2026-09-08: Multi-Tier GitHub Discovery, Pre-Print Resolution & Dead-Link Elimination
+- **Goal**: Eliminate false 404 links (like unreleased preprints) from literature reviews, resolve missing repositories across Semantic Scholar papers, modularize URL verification under 200-line SRP limits, and enforce post-processing table sanitization.
+- **Root Causes & Key Changes**:
+  1. **Split Verification & Discovery (`github_verifier.py` & `github_finder.py`)**: Extracted URL cleaning, streaming HTTP liveness verification, candidate regex matching, and blacklist definitions into dedicated `src/fetchers/github_verifier.py` (~95 lines). Kept `github_finder.py` focused exclusively on multi-tier resolution (< 196 lines).
+  2. **External Identifiers & ArXiv Preprints (`semantic_scholar_fetcher.py`)**: Added `externalIds` to `S2_FIELDS`. Parsed `arxiv_id`, `arxiv_url`, and `doi` into paper dictionaries, allowing papers retrieved from Semantic Scholar to be resolved against their ArXiv preprint pages and author project pages.
+  3. **Multi-Tier Resolution (`github_finder.py`)**:
+     - Tier 1: Abstract and comment text regex.
+     - Tier 2: Author project pages (`*.github.io`) found in metadata.
+     - Tier 3: ArXiv landing page and project link discovery via `arxiv_id` or fast title lookup on ArXiv API (`ti:"..."`).
+     - Tier 4: Targeted GitHub Search API fallback verifying candidate repo descriptions against paper title keywords with >= 3 word overlap and 200 OK liveness checks (successfully discovers repositories like `STRAPS-3DHumanShapePose` for BMVC 2020).
+  4. **Sub-Agent Abstract URL Redaction (`sub_agents.py`)**: Redacted unverified/dead repository links from abstracts before feeding text to the LLM, and updated sub-agent system prompts to strictly require that table cells match `GitHub Code Repo:`.
+  5. **Post-Processing Markdown Table Sanitization (`pipeline_runner.py`)**: Added `sanitize_markdown_table_github_urls()` to scan generated sub-agent tables and orchestrator syntheses, replacing any unverified or dead repository links with `N/A`.
+  6. **Keyword Extraction Safeguard (`pipeline_runner.py`)**: Added filtering of meta-prompt words (`perform`, `write`, `review`, etc.) in `extract_core_keywords()`, preventing search degradation when user requests vary slightly from canned templates.
+  7. **OpenWebUI Pipeline Dynamic Reload**: Registered `github_verifier` in `openwebui/t2m_pipeline.py`'s dynamic hot-reload sequence.
+  8. **Host File Permissions & SRP**: All modified files kept strictly under 200 lines with `0o666` permissions and `dmitryx:dmitryx` host ownership.
+
+### 2026-09-08: Core GitHub Extraction & Liveness Verification Refactor (`github_finder.py`)
+- **Goal**: Fix core extraction and verification pipeline directly at source without third-party fallback APIs, eliminate false negatives caused by naive `HEAD` requests or CloudFront 403/429 blocking, and handle author project pages (`*.github.io`).
+- **Root Causes & Key Changes**:
+  1. **Liveness Verification (`is_github_repo_live`)**: Replaced `requests.head()` with streaming `requests.get(..., stream=True)` with browser `User-Agent`. Explicitly distinguishes between `200 OK` (`VERIFIED`), `404 Not Found` (`NOT_FOUND`), and `403/429` (`RATE_LIMITED` - preserved as valid candidate rather than dropped).
+  2. **Direct Primary Sources Only (`resolve_paper_github`)**: Resolves directly against:
+     - Paper abstract text and ArXiv comment field.
+     - Author project pages (`*.github.io`) linked from abstract/comments.
+     - ArXiv landing page HTML (`https://arxiv.org/abs/...`).
+     - Zero external aggregator API dependencies (e.g. no Papers with Code, no unconstrained Google searches).
+  3. **Robust URL Canonicalization (`clean_github_url`)**: Strips enclosing brackets, quotes, trailing punctuation, query parameters, anchors, `.git` extensions, and branch subpaths (`/tree/main`, `/blob/...`).
+  4. **Diagnostic Test Suite**: Added standalone diagnostic test covering real-world papers (MDM, MotionDiffuse, EMDM), non-existent 404 repositories, and project page resolution.
+  5. **Modular Architecture**: Maintained file length at 193 lines (< 200 lines limit) with `0o666` permissions and `dmitryx:dmitryx` ownership.
 
 ### 2026-09-08: Academic Paper Discovery & Hybrid Ranking Engine (`academic_ranking_engine`)
 - **Goal**: Implement a production-grade Python package (`academic_ranking_engine`) designed to fetch, filter, rank, and balance academic papers from scholarly APIs (Semantic Scholar Graph API with ArXiv fallback), solving citation-lag bias and cross-domain pollution.

@@ -57,6 +57,14 @@ class Pipeline:
             default=config.MAX_RESULTS_PER_DOMAIN,
             description="Maximum paper results to retrieve per sub-agent domain"
         )
+        REQUIRE_CODE: Optional[bool] = Field(
+            default=config.REQUIRE_CODE_DEFAULT,
+            description="Strictly require verified open-source GitHub code repositories for all selected papers"
+        )
+        PREFER_CODE: Optional[bool] = Field(
+            default=config.PREFER_CODE_DEFAULT,
+            description="Prefer and prioritize papers with verified open-source GitHub code repositories"
+        )
         EZPROXY_COOKIE: Optional[str] = Field(
             default="",
             description="Institutional cookie override (e.g. Cookie-Editor JSON or 'ERIGHTS=...'). Leave empty to automatically use managed persistent session from ezproxy_cookies.json."
@@ -116,6 +124,7 @@ class Pipeline:
             import src.fetchers.ieee_fetcher
             import src.fetchers.arxiv_fetcher
             import src.fetchers.citation_enricher
+            import src.fetchers.github_verifier
             import src.fetchers.github_finder
             import src.core.pipeline_runner
             import src.agents.sub_agents
@@ -132,6 +141,7 @@ class Pipeline:
             importlib.reload(src.fetchers.ieee_fetcher)
             importlib.reload(src.fetchers.arxiv_fetcher)
             importlib.reload(src.fetchers.citation_enricher)
+            importlib.reload(src.fetchers.github_verifier)
             importlib.reload(src.fetchers.github_finder)
             importlib.reload(src.telemetry)
             importlib.reload(src.agents.sub_agents)
@@ -189,6 +199,8 @@ class Pipeline:
             os.environ["SEMANTIC_SCHOLAR_API_KEY"] = s2_key
             config.SEMANTIC_SCHOLAR_API_KEY = s2_key
         max_results = config.MAX_RESULTS_PER_DOMAIN if not self.valves.MAX_RESULTS_PER_DOMAIN else self.valves.MAX_RESULTS_PER_DOMAIN
+        require_code = config.REQUIRE_CODE_DEFAULT if self.valves.REQUIRE_CODE is None else self.valves.REQUIRE_CODE
+        prefer_code = config.PREFER_CODE_DEFAULT if self.valves.PREFER_CODE is None else self.valves.PREFER_CODE
         ezproxy_cookie = "" if not self.valves.EZPROXY_COOKIE else self.valves.EZPROXY_COOKIE
         ezproxy_domain = config.EZPROXY_DOMAIN_DEFAULT if not self.valves.EZPROXY_DOMAIN else self.valves.EZPROXY_DOMAIN
         auto_sso = config.AUTO_SSO_LOGIN_DEFAULT if self.valves.AUTO_SSO_LOGIN is None else self.valves.AUTO_SSO_LOGIN
@@ -242,6 +254,8 @@ class Pipeline:
                     enable_arxiv=enable_arxiv,
                     enable_semantic_scholar=enable_semantic_scholar,
                     max_results_per_domain=max_results,
+                    require_code=require_code,
+                    prefer_code=prefer_code,
                     ezproxy_cookie=ezproxy_cookie,
                     ezproxy_domain=ezproxy_domain,
                     kinematic_prompt=self.valves.KINEMATIC_PROMPT or KINEMATIC_SYSTEM_PROMPT,

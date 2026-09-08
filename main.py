@@ -18,6 +18,8 @@ def main():
         enable_arxiv=config.ENABLE_ARXIV_DEFAULT,
         enable_semantic_scholar=config.ENABLE_SEMANTIC_SCHOLAR_DEFAULT,
         max_results_per_domain=config.MAX_RESULTS_PER_DOMAIN,
+        require_code=config.REQUIRE_CODE_DEFAULT,
+        prefer_code=config.PREFER_CODE_DEFAULT,
         save_output_file=True
     )
     
