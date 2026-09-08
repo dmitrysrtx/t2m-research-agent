@@ -17,7 +17,7 @@ Includes multi-fetcher academic search across **Google Scholar**, **IEEE Xplore*
 2. **Automated Output Management:**
    - Whether triggered via CLI (`main.py`) or OpenWebUI Pipeline (`t2m_pipeline.py`), the generated synthesis report is saved to:
      - `LITERATURE_REVIEW.md` (root directory)
-   - **Cascading Multi-Tier PDF Ingestion:** Resolves full-text PDFs through 4 fallback tiers (Direct OA -> ArXiv conversion -> Unpaywall via DOI -> IEEE EZProxy stamp).
+   - **Cascading Multi-Tier PDF Ingestion & Candidate Replenishment:** Resolves full-text PDFs through 4 fallback tiers prioritizing institutional access (Tier 1: Direct OA -> Tier 2: IEEE EZProxy Session Stamp with Afeka SSO -> Tier 3: Unpaywall via DOI -> Tier 4: ArXiv direct endpoint). Dynamically replenishes candidate papers from an extended pool ($N \times 1.5$) so exactly the target count of full-text secured papers reach AI sub-agents, cleanly partitioning any paywalled candidates into an Appendix.
    - Downloaded full-text PDF articles are stored cleanly in `articles/*.pdf`.
 
 3. **Multi-Tier GitHub Code Repository Discovery & Verification Engine:**
@@ -249,6 +249,9 @@ python3 main.py
    - `ENABLE_IEEE` (Toggle IEEE Xplore searches)
    - `ENABLE_ARXIV` (Toggle open preprints)
    - `ENABLE_SCHOLAR` (Toggle Google Scholar indexing)
+   - `MODEL_NAME` (Configure backend LLM model, e.g. `antigravity/gemini-3.6-flash-medium` or `claude-3.5-sonnet`)
+   - `API_BASE_URL` (Configure OpenAI-compatible LLM endpoint, e.g. `http://172.17.0.1:20128/v1`)
+   - `OPENROUTER_API_KEY` (Configure API key for LLM queries)
    - `AUTO_SSO_LOGIN` (Auto-trigger mobile push 2FA on phone when cookies expire)
    - `EZPROXY_COOKIE` (Optional raw cookie override)
 4. Submit your research prompt to generate a complete multi-agent literature review!

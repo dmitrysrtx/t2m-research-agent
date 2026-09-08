@@ -65,6 +65,18 @@ class Pipeline:
             default=config.PREFER_CODE_DEFAULT,
             description="Prefer and prioritize papers with verified open-source GitHub code repositories"
         )
+        MODEL_NAME: Optional[str] = Field(
+            default=config.MODEL_NAME,
+            description="LLM Model identifier used by sub-agents and orchestrator (e.g. antigravity/gemini-3.6-flash-medium)"
+        )
+        API_BASE_URL: Optional[str] = Field(
+            default=config.BASE_URL,
+            description="OpenAI-compatible API Base URL (e.g. http://172.17.0.1:20128/v1)"
+        )
+        OPENROUTER_API_KEY: Optional[str] = Field(
+            default=config.API_KEY,
+            description="API Key for the LLM endpoint"
+        )
         EZPROXY_COOKIE: Optional[str] = Field(
             default="",
             description="Institutional cookie override (e.g. Cookie-Editor JSON or 'ERIGHTS=...'). Leave empty to automatically use managed persistent session from ezproxy_cookies.json."
@@ -99,6 +111,7 @@ class Pipeline:
         )
 
     def __init__(self):
+        self.id = "t2m_pipeline"
         self.name = "T2M Multi-Agent Academic Pipeline"
         self.valves = self.Valves()
 
@@ -127,6 +140,7 @@ class Pipeline:
             import src.fetchers.github_verifier
             import src.fetchers.github_finder
             import src.utils.text_formatters
+            import src.utils.pdf_downloader
             import src.core.pipeline_runner
             import src.agents.sub_agents
             import src.agents.orchestrator
@@ -145,6 +159,7 @@ class Pipeline:
             importlib.reload(src.fetchers.github_verifier)
             importlib.reload(src.fetchers.github_finder)
             importlib.reload(src.utils.text_formatters)
+            importlib.reload(src.utils.pdf_downloader)
             importlib.reload(src.telemetry)
             importlib.reload(src.agents.sub_agents)
             importlib.reload(src.agents.orchestrator)
@@ -206,6 +221,29 @@ class Pipeline:
         ezproxy_cookie = "" if not self.valves.EZPROXY_COOKIE else self.valves.EZPROXY_COOKIE
         ezproxy_domain = config.EZPROXY_DOMAIN_DEFAULT if not self.valves.EZPROXY_DOMAIN else self.valves.EZPROXY_DOMAIN
         auto_sso = config.AUTO_SSO_LOGIN_DEFAULT if self.valves.AUTO_SSO_LOGIN is None else self.valves.AUTO_SSO_LOGIN
+
+        # Synchronize LLM configuration from OpenWebUI Valves
+        llm_model = (self.valves.MODEL_NAME or config.MODEL_NAME).strip()
+        llm_base_url = (self.valves.API_BASE_URL or config.BASE_URL).strip()
+        llm_key = (self.valves.OPENROUTER_API_KEY or config.API_KEY).strip()
+
+        if llm_model:
+            config.MODEL_NAME = llm_model
+            os.environ["MODEL_NAME"] = llm_model
+        if llm_base_url:
+            config.BASE_URL = llm_base_url
+            os.environ["API_BASE_URL"] = llm_base_url
+        if llm_key:
+            config.API_KEY = llm_key
+            os.environ["OPENROUTER_API_KEY"] = llm_key
+
+        src.agents.sub_agents.MODEL_NAME = config.MODEL_NAME
+        src.agents.sub_agents.BASE_URL = config.BASE_URL
+        src.agents.sub_agents.API_KEY = config.API_KEY
+        src.agents.sub_agents.client = src.agents.sub_agents.OpenAI(
+            base_url=config.BASE_URL,
+            api_key=config.API_KEY
+        )
 
         msg_queue = queue.Queue()
         sse_sink = src.telemetry.SSEHandler()

@@ -24,47 +24,68 @@ def resolve_direct_pdf_url(url: str) -> str:
 
 
 def resolve_fulltext_pdf_url(paper: Dict[str, Any], session: Optional[requests.Session] = None) -> Optional[str]:
-    """Cascading resolver: Tier 1 (Direct OA) -> Tier 2 (ArXiv) -> Tier 3 (Unpaywall) -> Tier 4 (IEEE)."""
+    """
+    Cascading resolver for full-text academic PDFs:
+    - Tier 1: Direct OpenAccess PDF (ends with .pdf)
+    - Tier 2: IEEE EZProxy Stamp Resolver (High Priority for Afeka SSO)
+    - Tier 3: Unpaywall API via DOI
+    - Tier 4: ArXiv Fallback direct endpoint
+    """
     req = session or requests
+
+    # Tier 1: Direct OpenAccess PDF
     pdf_url = paper.get("pdf_url")
-    if pdf_url and (".pdf" in pdf_url or "arxiv.org" in pdf_url):
-        return resolve_direct_pdf_url(pdf_url)
+    if pdf_url and str(pdf_url).strip().endswith(".pdf"):
+        return resolve_direct_pdf_url(str(pdf_url).strip())
 
-    arxiv_id = paper.get("arxiv_id")
-    if arxiv_id:
-        return f"https://arxiv.org/pdf/{arxiv_id}.pdf"
+    # Tier 2: IEEE EZProxy Stamp Resolver (High Priority for Afeka SSO)
+    doi = paper.get("doi") or ""
     url = paper.get("url") or ""
-    arx_m = re.search(r'arxiv\.org/(?:abs|pdf)/(\d{4}\.\d{4,5}(?:v\d+)?)', url)
-    if arx_m:
-        return f"https://arxiv.org/pdf/{arx_m.group(1)}.pdf"
+    arnumber_match = re.search(r'document/(\d+)', url) or re.search(r'arnumber=(\d+)', url)
+    if "10.1109" in doi or arnumber_match or "ieee.org" in url:
+        arnum = arnumber_match.group(1) if arnumber_match else doi.split(".")[-1].split("/")[-1]
+        if arnum.isdigit():
+            return f"https://ieeexplore.ieee.org/stampPDF/getPDF.jsp?tp=&arnumber={arnum}"
 
-    doi = paper.get("doi")
+    # Tier 3: Unpaywall API via DOI
     if doi:
         try:
-            upw = req.get(f"https://api.unpaywall.org/v2/{doi}?email=unpaywall@academic.org", timeout=5)
+            upw = req.get(f"https://api.unpaywall.org/v2/{doi}?email=academic_bot@afeka.ac.il", timeout=4)
             if upw.status_code == 200:
                 oa_loc = upw.json().get("best_oa_location")
                 if oa_loc and oa_loc.get("url_for_pdf"):
                     return oa_loc["url_for_pdf"]
         except Exception:
             pass
-        if "10.1109" in doi:
-            return f"https://ieeexplore.ieee.org/stampPDF/getPDF.jsp?tp=&arnumber={doi.split('.')[-1]}"
 
-    arnum = paper.get("arnumber")
-    if arnum:
-        return f"https://ieeexplore.ieee.org/stampPDF/getPDF.jsp?tp=&arnumber={arnum}"
+    # Tier 4: ArXiv Fallback
+    arxiv_id = paper.get("arxiv_id")
+    if arxiv_id:
+        return f"https://arxiv.org/pdf/{arxiv_id}.pdf"
+    arx_m = re.search(r'arxiv\.org/(?:abs|pdf)/(\d{4}\.\d{4,5}(?:v\d+)?)', url)
+    if arx_m:
+        return f"https://arxiv.org/pdf/{arx_m.group(1)}.pdf"
+
     return resolve_direct_pdf_url(pdf_url or url) if (pdf_url or url) else None
 
 
 def get_pdf_candidate_urls(paper: Dict[str, Any], session: Optional[requests.Session] = None) -> List[str]:
-    """Generates ordered candidate endpoints for full-text acquisition."""
+    """Generates ordered candidate endpoints according to the priority cascade."""
     candidates, seen = [], set()
+    doi = paper.get("doi") or ""
+    url = paper.get("url") or ""
+    arnumber_match = re.search(r'document/(\d+)', url) or re.search(r'arnumber=(\d+)', url)
+    ieee_stamp = None
+    if "10.1109" in doi or arnumber_match or "ieee.org" in url:
+        arnum = arnumber_match.group(1) if arnumber_match else doi.split(".")[-1].split("/")[-1]
+        if arnum.isdigit():
+            ieee_stamp = f"https://ieeexplore.ieee.org/stampPDF/getPDF.jsp?tp=&arnumber={arnum}"
+
     for u in [
         resolve_fulltext_pdf_url(paper, session=session),
-        resolve_direct_pdf_url(paper.get("pdf_url", "")),
-        f"https://arxiv.org/pdf/{paper.get('arxiv_id')}.pdf" if paper.get("arxiv_id") else None,
-        f"https://ieeexplore.ieee.org/stampPDF/getPDF.jsp?tp=&arnumber={paper.get('doi', '').split('.')[-1]}" if "10.1109" in (paper.get("doi") or "") else None,
+        resolve_direct_pdf_url(paper.get("pdf_url", "")) if str(paper.get("pdf_url", "")).endswith(".pdf") else None,
+        ieee_stamp,
+        f"https://arxiv.org/pdf/{paper['arxiv_id']}.pdf" if paper.get("arxiv_id") else None,
         resolve_direct_pdf_url(paper.get("url", ""))
     ]:
         if u and u not in seen:
@@ -92,6 +113,8 @@ def download_pdfs(papers_list: List[Dict[str, Any]], output_dir: str = "articles
 
         if os.path.exists(filepath):
             logger.info(f"  [-] Already downloaded: {filename}")
+            p["fulltext_secured"] = True
+            p["pdf_path"] = filepath
             downloaded_count += 1
             continue
 
@@ -132,6 +155,8 @@ def download_pdfs(papers_list: List[Dict[str, Any]], output_dir: str = "articles
                         os.chmod(filepath, 0o666)
                     except Exception:
                         pass
+                    p["fulltext_secured"] = True
+                    p["pdf_path"] = filepath
                     downloaded_count += 1
                     success = True
                     logger.info(f"  [+] Saved PDF ({len(resp.content)} bytes) -> {filename}")
@@ -141,6 +166,7 @@ def download_pdfs(papers_list: List[Dict[str, Any]], output_dir: str = "articles
                 logger.debug(f"  [!] Candidate failed for '{title[:30]}': {target_url} ({e})")
 
         if not success:
+            p["fulltext_secured"] = False
             logger.warning(f"  [~] Could not download full PDF for: '{title[:40]}...'")
             failed_papers.append(title)
 
@@ -150,15 +176,19 @@ def download_pdfs(papers_list: List[Dict[str, Any]], output_dir: str = "articles
 
 if __name__ == "__main__":
     print("==================================================")
-    print("📄 Cascading PDF Downloader Standalone Diagnostic")
+    print("📄 Cascading PDF Downloader Priority Diagnostic")
     print("==================================================")
+    p_oa = {"title": "Direct OA Paper", "pdf_url": "https://example.org/paper.pdf"}
+    assert resolve_fulltext_pdf_url(p_oa) == "https://example.org/paper.pdf"
+    print("[*] Tier 1 (Direct OA) Priority: PASSED")
+
+    p_ieee = {"title": "IEEE Paper", "doi": "10.1109/CVPR.2023.98765", "arxiv_id": "2304.01116"}
+    u_ieee = resolve_fulltext_pdf_url(p_ieee)
+    assert u_ieee == "https://ieeexplore.ieee.org/stampPDF/getPDF.jsp?tp=&arnumber=98765"
+    print(f"[*] Tier 2 (IEEE Stamp Precedence over ArXiv): {u_ieee} -> PASSED")
+
     p_arxiv = {"title": "PhysDiff", "arxiv_id": "2212.02500"}
     u_arxiv = resolve_fulltext_pdf_url(p_arxiv)
     assert u_arxiv == "https://arxiv.org/pdf/2212.02500.pdf"
-    print(f"[*] Tier 2 (ArXiv) Resolution: {u_arxiv} -> PASSED")
-
-    p_ieee = {"title": "IEEE Paper", "doi": "10.1109/CVPR.2023.98765"}
-    u_ieee = resolve_fulltext_pdf_url(p_ieee)
-    assert u_ieee == "https://ieeexplore.ieee.org/stampPDF/getPDF.jsp?tp=&arnumber=98765"
-    print(f"[*] Tier 4 (IEEE Stamp) Resolution: {u_ieee} -> PASSED")
+    print(f"[*] Tier 4 (ArXiv Fallback) Resolution: {u_arxiv} -> PASSED")
     print("==================================================")

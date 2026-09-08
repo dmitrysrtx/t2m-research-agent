@@ -62,6 +62,40 @@ t2m-research-agent/
 
 ## Architectural Decision Log
 
+### 2026-09-08: OpenWebUI Model Discovery, Container IP Bridge Cache & LLM Valve Synchronization
+- **Goal**: Resolve `Model not found` in OpenWebUI chat, diagnose container bridge IP caching following pipeline container restarts, expose configurable backend LLM settings (`MODEL_NAME`, `API_BASE_URL`, `OPENROUTER_API_KEY`) in OpenWebUI Valves, and fix pipeline registration in the OpenWebUI Pipelines framework.
+- **Root Causes & Key Changes**:
+  1. **Container Bridge IP & In-Memory Models Cache**: When `open-webui-pipelines` was restarted, its container IP changed (`172.18.0.34` -> `172.18.0.1`), causing `open-webui` to log `Connect call failed ('172.18.0.34', 9099)`. Because `open-webui` caches discovered models in memory (`request.app.state.MODELS`), the failure dropped `t2m_pipeline` from the active model registry. When users chatted with custom model `tex-to-motion` (`base_model_id: t2m_pipeline`), `open-webui` threw `HTTP 400: Error processing chat metadata: Model not found`.
+  2. **Model Registry Refresh Trigger**: Discovered that calling `GET /api/models?refresh=true` clears `get_all_models.cache` and repopulates `request.app.state.MODELS` with all 500+ models, restoring `t2m_pipeline` and `tex-to-motion`.
+  3. **Pipelines Discovery Framework Bug (`self.type = "pipe"`)**: In `open-webui/pipelines/main.py`, `get_all_pipelines()` inspects `if hasattr(pipeline, "type"):`. If set to `"manifold"` or `"filter"`, it handles them; but if set to `"pipe"`, it had no branch and skipped registration entirely, falling into `else:` only when `self.type` was absent. Kept initialization clean with `self.id = "t2m_pipeline"` and no `self.type`.
+  4. **Configurable LLM Valves in OpenWebUI (`openwebui/t2m_pipeline.py`)**: Added `MODEL_NAME`, `API_BASE_URL`, and `OPENROUTER_API_KEY` to `Pipeline.Valves` with default fallbacks to `agent_config.py`. In `pipe()`, synchronized these valve parameters to runtime client bindings in `src.agents.sub_agents.client`, allowing users to inspect and switch models directly from OpenWebUI.
+  5. **Permissions**: Ensured `0o666` and host user ownership `dmitryx:dmitryx` on `openwebui/t2m_pipeline.py` and `valves.json`.
+
+### 2026-09-08: Cascading PDF Resolver Re-Ordering, Candidate Replenishment & Full-Text Ingestion Integrity
+- **Goal**: Guarantee academic integrity and anti-hallucination by ensuring sub-agents analyze ONLY papers with secured full-text PDFs, prioritize Afeka SSO institutional access on IEEE Xplore via EZProxy session stamping, dynamically replenish candidates from an extended pool ($N \times 1.5$) so target counts (20 papers) are fulfilled, and partition un-ingested candidates into an Appendix.
+- **Root Causes & Key Changes**:
+  1. **Re-ordered PDF Download Cascade (`src/utils/pdf_downloader.py`)**:
+     - Tier 1: Direct OpenAccess PDF (ends with `.pdf`).
+     - Tier 2: IEEE EZProxy Stamp (Afeka SSO authenticated session for `10.1109` DOIs, `document/{arnum}`, `arnumber={arnum}`, or `ieee.org` URLs $\rightarrow$ `https://ieeexplore.ieee.org/stampPDF/getPDF.jsp?tp=&arnumber={arnum}`). Promoted above ArXiv and Unpaywall to ensure institutional IEEE peer-reviewed versions are acquired first.
+     - Tier 3: Unpaywall API via DOI (`email=academic_bot@afeka.ac.il`, 4s timeout).
+     - Tier 4: ArXiv direct endpoint (`https://arxiv.org/pdf/{arxiv_id}.pdf`).
+     - Added `fulltext_secured: bool` flag to candidate records.
+  2. **Candidate Pool Replenishment Loop (`src/core/pipeline_runner.py`)**:
+     - Extended candidate retrieval to `candidate_pool_size = max(int(max_results_per_domain * 1.5), 8)`.
+     - Ranked candidates via Code-First scoring without truncating early.
+     - Implemented candidate replenishment loop: iterates through ranked candidates, attempting PDF acquisition until exactly `max_results_per_domain` full-text verified papers are secured for each domain.
+     - If a candidate download fails, the pipeline immediately draws the next ranked candidate from the pool.
+  3. **Strict Sub-Agent Ingestion Partitioning (`src/core/pipeline_runner.py`)**:
+     - Exclusively passed `secured_by_domain` to sub-agents 1–4 (`kinematic`, `physics`, `rl`, `pose`), completely preventing LLM hallucination on abstracts.
+  4. **Un-ingested Candidate Appendix (`src/core/pipeline_runner.py`)**:
+     - Created `build_unsecured_appendix()`, formatting uningested candidate papers into a clean Markdown table (`Title (Year)`, `Venue`, `Citations`, `Code Repository`, `Ingestion Status: Paywalled / Unavailable`).
+  5. **Summary Header Metrics**:
+     - Updated header: `**Unique Papers Processed:** {total_candidates} | **Full-Text RAG Verified:** {secured_count} | **Paywalled/Skipped:** {skipped_count}`.
+  6. **OpenWebUI Pipeline Dynamic Reload (`openwebui/t2m_pipeline.py`)**:
+     - Registered `src.utils.pdf_downloader` in dynamic hot-reload sequence.
+  7. **SRP & File Length Limits**:
+     - Maintained `pdf_downloader.py` (195 lines) strictly under 200 lines, with host permissions `0o666` and `dmitryx:dmitryx`.
+
 ### 2026-09-08: Standardized Markdown Links, Parallelized Discovery & Cascading PDF Ingestion
 - **Goal**: Standardize all GitHub links in sub-agent tables, narrative text, and verification summaries to clean `[owner/repo](https://github.com/owner/repo)` format, resolve the 12/20 PDF download drop-off via multi-tier fallback (Direct OA -> ArXiv -> Unpaywall -> IEEE EZproxy stamp), and parallelize repository discovery via `ThreadPoolExecutor(max_workers=8)` to eliminate sequential network latency.
 - **Root Causes & Key Changes**:

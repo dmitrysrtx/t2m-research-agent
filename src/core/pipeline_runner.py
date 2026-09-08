@@ -128,6 +128,28 @@ def sanitize_markdown_table_github_urls(table_text: str, verified_urls: set) -> 
     return clean_github_markdown_link(sanitized)
 
 
+def build_unsecured_appendix(unsecured_list: list) -> str:
+    """Builds an Appendix table for candidate papers whose full text could not be downloaded."""
+    if not unsecured_list:
+        return ""
+    lines = [
+        "## 📎 Appendix: Papers Identified via Citations (Full-Text Not Ingested)\n",
+        "The following papers were identified and ranked during academic discovery, but their full-text PDF was paywalled or unavailable for deep ingestion:\n",
+        "| Title (Year) | Venue | Citations | Code Repository | Ingestion Status |",
+        "| :--- | :--- | :--- | :--- | :--- |"
+    ]
+    for p in unsecured_list:
+        title = str(p.get("title", "Unknown Title")).replace("|", "-").strip()
+        year = p.get("year") or "N/A"
+        url = p.get("url") or "#"
+        venue = p.get("venue") or "Academic Publication"
+        citations = p.get("citations") or 0
+        gh = clean_github_markdown_link(p.get("github_url") or "N/A")
+        status = "Paywalled / Unavailable"
+        lines.append(f"| [{title} ({year})]({url}) | {venue} | {citations} | {gh} | {status} |")
+    return "\n".join(lines) + "\n\n"
+
+
 def rank_and_filter_candidates(
     candidates: list,
     max_results: int,
@@ -264,9 +286,9 @@ def execute_t2m_research(
         ],
     }
 
-    # 1. FETCH & RANK PAPERS (CODE-FIRST)
-    def fetch_papers_for_domain(domain_key: str):
-        candidate_pool_size = max(max_results_per_domain * 2, 8)
+    # 1. FETCH & RANK CANDIDATE PAPERS (CODE-FIRST)
+    def fetch_candidates_for_domain(domain_key: str) -> list:
+        candidate_pool_size = max(int(max_results_per_domain * 1.5), 8)
         raw_candidates = []
         seen_keys = set()
         query_terms = domains.get(domain_key, [clean_query])
@@ -302,76 +324,131 @@ def execute_t2m_research(
 
         return rank_and_filter_candidates(
             raw_candidates,
-            max_results=max_results_per_domain,
+            max_results=candidate_pool_size,
             require_code=require_code,
             prefer_code=prefer_code,
             session=manager.get_session()
         )
 
-    _notify(f"[1/4] Fetching & ranking papers across sources (Code-First={prefer_code or require_code})...")
+    _notify(f"[1/4] Fetching & ranking candidate papers (Code-First={prefer_code or require_code})...")
     tm.tool_call("fetch_papers", args=f"Domains: {list(domains.keys())}", source="fetcher")
 
-    kinematic_papers = fetch_papers_for_domain("kinematic")
-    physics_papers = fetch_papers_for_domain("physics")
-    rl_papers = fetch_papers_for_domain("rl")
-    pose_papers = fetch_papers_for_domain("pose")
+    kinematic_candidates = fetch_candidates_for_domain("kinematic")
+    physics_candidates = fetch_candidates_for_domain("physics")
+    rl_candidates = fetch_candidates_for_domain("rl")
+    pose_candidates = fetch_candidates_for_domain("pose")
 
-    all_papers_raw = kinematic_papers + physics_papers + rl_papers + pose_papers
-    unique_papers = []
-    seen_keys = set()
-
-    for p in all_papers_raw:
-        paper_key = p.get('url') or p.get('title')
-        if paper_key not in seen_keys:
-            seen_keys.add(paper_key)
-            unique_papers.append(p)
-
-    tm.tool_result("fetch_papers", result=f"Fetched {len(all_papers_raw)} hits ({len(unique_papers)} unique papers)", source="fetcher")
+    total_candidates_pool = (
+        len(kinematic_candidates) + len(physics_candidates) + len(rl_candidates) + len(pose_candidates)
+    )
+    tm.tool_result("fetch_papers", result=f"Fetched {total_candidates_pool} ranked candidate papers across 4 domains", source="fetcher")
 
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     articles_dir = os.path.join(project_root, "articles")
 
-    # 2. DOWNLOAD PDFs
-    _notify("[2/4] Downloading UNIQUE PDFs for Deep RAG ingestion...")
-    tm.tool_call("download_pdfs", args=f"{len(unique_papers)} papers target", source="pdf_downloader")
-    download_count = download_pdfs(
-        unique_papers,
-        output_dir=articles_dir,
-        session=manager.get_session(),
-        cookie_override=ezproxy_cookie
-    )
-    manager.sync_session_cookies_to_disk()
-    tm.tool_result("download_pdfs", result=f"Downloaded {download_count} PDFs", source="pdf_downloader")
+    # 2. DOWNLOAD PDFs WITH CANDIDATE REPLENISHMENT
+    _notify("[2/4] Downloading full-text PDFs with candidate replenishment...")
+    tm.tool_call("download_pdfs", args=f"Target: {max_results_per_domain} per domain", source="pdf_downloader")
 
-    # 2.5 DISCOVER GITHUB REPOSITORIES
-    _notify("[2.5/4] Discovering GitHub code repositories for papers...")
-    tm.tool_call("find_github_repos", args=f"{len(unique_papers)} papers target", source="github_finder")
+    secured_by_domain = {}
+    unsecured_papers = []
+    global_secured_keys = set()
+
+    for domain_name, candidate_list in [
+        ("kinematic", kinematic_candidates),
+        ("physics", physics_candidates),
+        ("rl", rl_candidates),
+        ("pose", pose_candidates)
+    ]:
+        domain_secured = []
+        for candidate in candidate_list:
+            c_key = re.sub(r'[^a-zA-Z0-9]', '', candidate.get('title', '').lower())
+            if len(domain_secured) < max_results_per_domain:
+                if not candidate.get("fulltext_secured"):
+                    download_pdfs(
+                        [candidate],
+                        output_dir=articles_dir,
+                        session=manager.get_session(),
+                        cookie_override=ezproxy_cookie
+                    )
+                if candidate.get("fulltext_secured"):
+                    domain_secured.append(candidate)
+                    global_secured_keys.add(c_key)
+                else:
+                    unsecured_papers.append(candidate)
+            else:
+                if c_key not in global_secured_keys:
+                    unsecured_papers.append(candidate)
+
+        if len(domain_secured) < max_results_per_domain:
+            logger.warning(
+                f"[!] Only secured {len(domain_secured)}/{max_results_per_domain} full-text papers for '{domain_name}'."
+            )
+        secured_by_domain[domain_name] = domain_secured
+
+    manager.sync_session_cookies_to_disk()
+
+    # Deduplicate secured papers across domains
+    unique_secured = []
+    seen_sec_keys = set()
+    for d_papers in secured_by_domain.values():
+        for p in d_papers:
+            pkey = p.get('url') or p.get('title')
+            if pkey not in seen_sec_keys:
+                seen_sec_keys.add(pkey)
+                unique_secured.append(p)
+
+    # Deduplicate unsecured papers
+    unique_unsecured = []
+    seen_unsec_keys = set(seen_sec_keys)
+    for p in unsecured_papers:
+        pkey = p.get('url') or p.get('title')
+        if pkey not in seen_unsec_keys:
+            seen_unsec_keys.add(pkey)
+            unique_unsecured.append(p)
+
+    total_candidates = len(unique_secured) + len(unique_unsecured)
+    download_count = len(unique_secured)
+    tm.tool_result(
+        "download_pdfs",
+        result=f"Secured {download_count} full-text PDFs (Replenished from {total_candidates} candidates)",
+        source="pdf_downloader"
+    )
+
+    # 2.5 DISCOVER & VERIFY GITHUB REPOSITORIES
+    _notify("[2.5/4] Verifying GitHub code repositories...")
+    tm.tool_call("find_github_repos", args=f"{len(unique_secured)} secured papers", source="github_finder")
     gh_count = enrich_papers_with_github(
-        unique_papers,
+        unique_secured,
         session=manager.get_session(),
         telemetry=tm,
         status_callback=_notify
     )
-    tm.tool_result("find_github_repos", result=f"Discovered {gh_count} GitHub repositories", source="github_finder")
-    verified_gh_urls = {p.get("github_url") for p in unique_papers if p.get("github_url") and p.get("github_url") != "N/A"}
+    tm.tool_result("find_github_repos", result=f"Verified GitHub repositories ({gh_count} active)", source="github_finder")
+    verified_gh_urls = {
+        p.get("github_url")
+        for p in (unique_secured + unique_unsecured)
+        if p.get("github_url") and p.get("github_url") != "N/A"
+    }
 
-    # 3. SUB-AGENTS ANALYSIS
-    _notify("[3/4] Engaging AI Expert Sub-Agents...")
-    tm.thinking("Engaging AI Expert Sub-Agents across 4 domains", source="orchestrator")
+    # 3. SUB-AGENTS ANALYSIS (Full-Text Secured Only)
+    _notify("[3/4] Engaging AI Expert Sub-Agents on Full-Text Secured Papers...")
+    tm.thinking("Engaging AI Expert Sub-Agents across 4 domains (Full-Text Secured Only)", source="orchestrator")
+
     kinematic_result = sanitize_markdown_table_github_urls(
-        analyze_kinematic(kinematic_papers, custom_prompt=kinematic_prompt, telemetry=tm),
+        analyze_kinematic(secured_by_domain["kinematic"], custom_prompt=kinematic_prompt, telemetry=tm),
         verified_gh_urls
     )
     physics_result = sanitize_markdown_table_github_urls(
-        analyze_physics_diffusion(physics_papers, custom_prompt=physics_prompt, telemetry=tm),
+        analyze_physics_diffusion(secured_by_domain["physics"], custom_prompt=physics_prompt, telemetry=tm),
         verified_gh_urls
     )
     rl_result = sanitize_markdown_table_github_urls(
-        analyze_rl_control(rl_papers, custom_prompt=rl_prompt, telemetry=tm),
+        analyze_rl_control(secured_by_domain["rl"], custom_prompt=rl_prompt, telemetry=tm),
         verified_gh_urls
     )
     pose_result = sanitize_markdown_table_github_urls(
-        analyze_pose_vision(pose_papers, custom_prompt=pose_prompt, telemetry=tm),
+        analyze_pose_vision(secured_by_domain["pose"], custom_prompt=pose_prompt, telemetry=tm),
         verified_gh_urls
     )
 
@@ -390,10 +467,13 @@ def execute_t2m_research(
         verified_gh_urls
     )
 
+    appendix_section = build_unsecured_appendix(unique_unsecured)
+
     # Build response for Open WebUI & File Saving
     summary_header = (
         f"# 🎓 T2M Academic Research Report\n\n"
-        f"**Query:** `{query[:100]}...` | **Extracted Search Terms:** `{clean_query}` | **Unique Papers Processed:** {len(unique_papers)} | **PDFs Secured:** {download_count}\n"
+        f"**Query:** `{query[:100]}...` | **Extracted Search Terms:** `{clean_query}`\n"
+        f"**Unique Papers Processed:** {total_candidates} | **Full-Text RAG Verified:** {len(unique_secured)} | **Paywalled/Skipped:** {len(unique_unsecured)}\n"
         f"**Fetchers Active:** "
         f"{'IEEE ' if enable_ieee else ''}"
         f"{'GoogleScholar ' if enable_scholar else ''}"
@@ -407,14 +487,17 @@ def execute_t2m_research(
         f"### 4. Pose & Vision Sub-Agent\n{pose_result}\n\n"
         f"---\n\n"
         f"# 🏛️ Master Literature Synthesis (Orchestrator)\n\n"
-        f"{final_review}"
+        f"{final_review}\n\n"
     )
 
+    if appendix_section:
+        summary_header += f"---\n\n{appendix_section}"
+
     # 5. ACADEMIC CREDIBILITY & PEER-REVIEW ENRICHMENT
-    if unique_papers:
+    if unique_secured:
         _notify("📊 Enriching review with CrossRef and ArXiv peer-review verification...")
-        tm.tool_call("enrich_literature_review", args=f"{len(unique_papers)} papers", source="enricher")
-        summary_header = enrich_literature_review(summary_header, papers=unique_papers)
+        tm.tool_call("enrich_literature_review", args=f"{len(unique_secured)} secured papers", source="enricher")
+        summary_header = enrich_literature_review(summary_header, papers=unique_secured)
         tm.tool_result("enrich_literature_review", result="Citations verified", source="enricher")
 
     if save_output_file:
@@ -465,6 +548,16 @@ if __name__ == "__main__":
     assert len(ranked_require) == 1
     assert ranked_require[0]["title"] == "Paper With Code"
     print("[*] Code-First Candidate Ranking Validation: PASSED")
+
+    # Validate replenishment & appendix table generator
+    mock_unsecured = [
+        {"title": "Paywalled Motion Synthesis", "year": 2024, "venue": "CVPR", "citations": 42, "github_url": "https://github.com/test/repo"}
+    ]
+    app_md = build_unsecured_appendix(mock_unsecured)
+    assert "Appendix: Papers Identified via Citations" in app_md
+    assert "[test/repo](https://github.com/test/repo)" in app_md
+    assert "Paywalled / Unavailable" in app_md
+    print("[*] Appendix Table Generator Validation: PASSED")
 
     manager = EZProxyManager()
     status = manager.check_status()
