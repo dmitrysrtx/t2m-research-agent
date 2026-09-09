@@ -33,35 +33,35 @@ import agent_config as config
 
 class Pipeline:
     class Valves(BaseModel):
-        ENABLE_IEEE: Optional[bool] = Field(
+        ENABLE_IEEE: bool = Field(
             default=config.ENABLE_IEEE_DEFAULT,
             description="Enable paper searching via IEEE Xplore (institutional authentication required)"
         )
-        ENABLE_SCHOLAR: Optional[bool] = Field(
+        ENABLE_SCHOLAR: bool = Field(
             default=config.ENABLE_SCHOLAR_DEFAULT,
             description="Enable academic paper searching via Google Scholar Index"
         )
-        ENABLE_ARXIV: Optional[bool] = Field(
+        ENABLE_ARXIV: bool = Field(
             default=config.ENABLE_ARXIV_DEFAULT,
             description="Enable open preprint searching via ArXiv API"
         )
-        ENABLE_SEMANTIC_SCHOLAR: Optional[bool] = Field(
+        ENABLE_SEMANTIC_SCHOLAR: bool = Field(
             default=config.ENABLE_SEMANTIC_SCHOLAR_DEFAULT,
             description="Enable academic paper searching via Semantic Scholar API"
         )
         SEMANTIC_SCHOLAR_API_KEY: Optional[str] = Field(
-            default=config.SEMANTIC_SCHOLAR_API_KEY,
+            default=config.SEMANTIC_SCHOLAR_API_KEY or "",
             description="Semantic Scholar API Key for high rate limits (https://www.semanticscholar.org/product/api)"
         )
-        MAX_RESULTS_PER_DOMAIN: Optional[int] = Field(
+        MAX_RESULTS_PER_DOMAIN: int = Field(
             default=config.MAX_RESULTS_PER_DOMAIN,
             description="Maximum paper results to retrieve per sub-agent domain"
         )
-        REQUIRE_CODE: Optional[bool] = Field(
+        REQUIRE_CODE: bool = Field(
             default=config.REQUIRE_CODE_DEFAULT,
             description="Strictly require verified open-source GitHub code repositories for all selected papers"
         )
-        PREFER_CODE: Optional[bool] = Field(
+        PREFER_CODE: bool = Field(
             default=config.PREFER_CODE_DEFAULT,
             description="Prefer and prioritize papers with verified open-source GitHub code repositories"
         )
@@ -74,7 +74,7 @@ class Pipeline:
             description="OpenAI-compatible API Base URL (e.g. http://172.17.0.1:20128/v1)"
         )
         OPENROUTER_API_KEY: Optional[str] = Field(
-            default=config.API_KEY,
+            default=config.API_KEY or "",
             description="API Key for the LLM endpoint"
         )
         EZPROXY_COOKIE: Optional[str] = Field(
@@ -85,7 +85,7 @@ class Pipeline:
             default=config.EZPROXY_DOMAIN_DEFAULT,
             description="Institutional EZproxy domain name (e.g., ezproxy.afeka.ac.il)"
         )
-        AUTO_SSO_LOGIN: Optional[bool] = Field(
+        AUTO_SSO_LOGIN: bool = Field(
             default=config.AUTO_SSO_LOGIN_DEFAULT,
             description="Automatically renew institutional session via persistent profile (silent renewal or mobile push 2FA if re-authentication needed)"
         )
@@ -127,6 +127,7 @@ class Pipeline:
         # 🔄 Dynamic module reload on each execution (Hot-Reloading without Docker restart)
         try:
             import importlib
+            import src.core.config_loader
             import agent_config as config
             import src.auth.ezproxy_auth
             import src.auth.ezproxy_session
@@ -146,6 +147,7 @@ class Pipeline:
             import src.agents.orchestrator
             import src.telemetry
 
+            importlib.reload(src.core.config_loader)
             importlib.reload(config)
             importlib.reload(src.auth.ezproxy_auth)
             importlib.reload(src.auth.ezproxy_session)

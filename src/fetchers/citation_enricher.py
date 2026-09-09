@@ -6,6 +6,7 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 import requests
 from src.utils.logger import logger
+from src.fetchers.venue_ranker import evaluate_venue
 
 HEADERS = {"User-Agent": "T2MResearchAgent/2.0 (mailto:academic@example.com)"}
 
@@ -122,10 +123,10 @@ def query_academic_metadata(url: str, title: str, existing_meta: dict = None) ->
     except Exception as e:
         logger.debug(f"[citation_enricher] CrossRef search error: {e}")
 
-    # 4. Resilient Fallback
+    # 4. Resilient Fallback with Deterministic Venue Ranker
     final_venue = fallback_venue if (fallback_venue and fallback_venue not in {"Peer-Reviewed Journal", "Unknown"}) else "Academic Publication"
-    final_status = "Preprint (arXiv)" if "arxiv" in final_venue.lower() or "arxiv" in url else "Peer-Reviewed Journal/Conf"
-    return {"venue": final_venue, "year": fallback_year or "N/A", "citations": fallback_cites, "status": final_status}
+    v_eval = evaluate_venue(final_venue, url)
+    return {"venue": v_eval["venue_name"], "year": fallback_year or "N/A", "citations": fallback_cites, "status": v_eval["impact_factor"]}
 
 
 def extract_papers_from_markdown(content: str) -> list:

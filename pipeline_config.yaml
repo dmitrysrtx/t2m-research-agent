@@ -1,0 +1,324 @@
+# ==============================================================================
+# 🧭 T2M ACADEMIC RESEARCH AGENT — MASTER CONFIGURATION MANIFEST
+# ==============================================================================
+# Single Source of Truth (SSOT) across all pipeline execution layers.
+# This file governs paper discovery, citation velocity ranking, artifact verification,
+# PDF acquisition (OpenAccess / IEEE EZProxy / Unpaywall), and LLM multi-agent synthesis.
+#
+# Environment Variable Syntax:
+#   ${VAR_NAME}           -> Injected directly from system environment or .env
+#   ${VAR_NAME:-default}  -> Injected from environment, falling back to 'default' if unset.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 🎯 ACTIVE OPERATIONAL PROFILE (PRESET)
+# ------------------------------------------------------------------------------
+# Selects the global behavior preset for the research pipeline:
+#
+#   - "thesis_master" : Balanced Master's thesis mode (65% Frontier SOTA + 35% Seminal
+#                       Foundations), strict full-text PDF requirement, deep mathematical RAG.
+#   - "frontier_sota" : Hyper-focused on the last 18 months, heavily weighting citation
+#                       velocity and top flagship AI venues (CVPR, NeurIPS, ICLR).
+#   - "code_first"    : Reproducibility audit mode. Strictly requires verified, working
+#                       GitHub repositories for every ingested paper.
+# ------------------------------------------------------------------------------
+active_profile: "thesis_master"
+
+
+# ==============================================================================
+# 🧠 LAYER 1: LLM PROVIDER & INFERENCE GENERATION
+# ==============================================================================
+# Controls the LLM models, API endpoints, deterministic temperature settings,
+# and token budgets for sub-agent technical extraction and master synthesis.
+# ==============================================================================
+llm:
+  # Primary LLM Model Identifier (e.g., anthropic/claude-3.5-sonnet, google/gemini-2.5-pro)
+  model_name: "${MODEL_NAME:-anthropic/claude-3.5-sonnet}"
+
+  # OpenAI-compatible API Gateway URL (OpenRouter, LiteLLM, vLLM, Ollama, etc.)
+  base_url: "${API_BASE_URL:-https://openrouter.ai/api/v1}"
+
+  # Authentication API Key (loaded securely from .env to prevent committing secrets)
+  api_key: "${OPENROUTER_API_KEY}"
+
+  # Sub-Agent Temperature [0.0 - 1.0]
+  # Recommended: 0.1 - 0.2.
+  # WHY: Extremely low temperature enforces deterministic extraction of exact formulas,
+  # metrics (FID, MPJPE), and architecture names directly from the paper text with 0% hallucination.
+  subagent_temperature: 0.2
+
+  # Master Orchestrator Temperature [0.0 - 1.0]
+  # Recommended: 0.3 - 0.4.
+  # WHY: Slightly higher temperature allows fluid academic prose, elegant transition between
+  # chapters, and insightful comparative synthesis across the 4 research domains.
+  orchestrator_temperature: 0.3
+
+  # Maximum Token Budget per Sub-Agent Domain Table
+  # Recommended: 4096 tokens (sufficient for detailed ~5-paper extraction tables).
+  subagent_max_tokens: 4096
+
+  # Maximum Token Budget for Master Literature Review Chapter
+  # Recommended: 8192 tokens (produces an exhaustive 4,000+ word publication-ready thesis review).
+  orchestrator_max_tokens: 8192
+
+
+# ==============================================================================
+# 🔍 LAYER 2: ACADEMIC SEARCH & DISCOVERY
+# ==============================================================================
+# Defines how the agent searches, queries, and filters the academic literature.
+# ==============================================================================
+search_discovery:
+  # Default fallback query if no topic is provided via CLI or WebUI
+  default_query: "${DEFAULT_SEARCH_QUERY:-text-to-motion human motion}"
+
+  # Target number of papers to select per sub-agent domain
+  # Formula: (4 domains * max_results_per_domain) = Total Verified Papers Ingested.
+  # Example: 5 per domain = 20 core papers analyzed in the final report.
+  max_results_per_domain: 5
+
+  # Primary Search Engine (Semantic Scholar Graph API)
+  # Recommended: true. Single Source of Truth indexing arXiv, IEEE, ACM, Springer, Nature.
+  enable_semantic_scholar: true
+
+  # Semantic Scholar API Key (Optional, but highly recommended)
+  # Free API key increases rate limits from 1 req/sec to 10 req/sec, speeding up discovery.
+  # Get one at: https://www.semanticscholar.org/product/api
+  semantic_scholar_api_key: "${SEMANTIC_SCHOLAR_API_KEY}"
+
+  # Minimum Citation Count Threshold [0 - 50]
+  # 0  -> Includes brand-new preprints / 2025-2026 papers with 0 citations (recommended for SOTA).
+  # 5+ -> Excludes obscure or unvetted papers, ensuring high-impact baseline.
+  min_citations: 0
+
+  # Hard Domain Lock (Comma-separated)
+  # WHY: Strictly restricts Semantic Scholar discovery to Computer Science & Robotics.
+  # Prevents cross-domain pollution (e.g. sports medicine, clinical biomechanics, thermodynamics).
+  fields_of_study: "${SEMANTIC_SCHOLAR_FIELDS_OF_STUDY:-Computer Science,Engineering}"
+
+  # Publication Year Filter (null = search all years; or specify range e.g., "2020-2026")
+  year_range: null
+
+  # Auxiliary Search Engines (disabled by default in favor of Semantic Scholar SSOT)
+  enable_ieee: false      # Direct IEEE Xplore API (S2 already indexes IEEE)
+  enable_scholar: false   # Direct Google Scholar scraping (disabled to avoid captchas)
+  enable_arxiv: false     # Direct ArXiv API (S2 already indexes ArXiv preprints)
+
+
+# ==============================================================================
+# ⚖️ LAYER 3: DUAL-BUCKET SCORING & RANKING FORMULAS
+# ==============================================================================
+# Governs the mathematical ranking formula that balances cutting-edge SOTA
+# against seminal high-citation foundational works.
+# ==============================================================================
+scoring_ranking:
+  # Bucket Distribution Ratios [Must sum to 1.0]
+  # 0.65 (65%) -> Dedicated to recent SOTA innovations (velocity & venue prioritized).
+  # 0.35 (35%) -> Dedicated to classic foundational papers (total citation count prioritized).
+  frontier_bucket_ratio: 0.65
+  foundational_bucket_ratio: 0.35
+
+  # Temporal Threshold for the Frontier SOTA Bucket [1 - 4 years]
+  # Papers published within (current_year - recent_year_window) qualify for Frontier ranking.
+  recent_year_window: 2
+
+  # Citation Velocity Weight for Influential Citations
+  # Formula: V_cit = (citations + influential_weight * influential_citations) / delta_t
+  influential_citation_weight: 2.5
+
+  # Minimum Time Denominator (Epsilon) in Years
+  # WHY: Prevents division by zero or infinite velocity for papers published this month.
+  time_delta_min: 0.5
+
+  # Venue Prestige Multipliers (W_venue)
+  # Multipliers applied to the base score depending on publication peer-review tier:
+  venue_tier_1_weight: 2.0   # Flagship: CVPR, ICCV, ECCV, NeurIPS, ICML, ICLR, SIGGRAPH, ICRA, IROS, TPAMI
+  venue_tier_2_weight: 1.35  # Specialized: WACV, 3DV, BMVC, IEEE RA-L, CVIU, PR, TVCG
+  venue_tier_3_weight: 1.0   # Baseline: Generic workshops, preprints, or unranked conferences
+
+  # Score Boost for Verified Open-Source Code (+ points added directly to final score)
+  # Recommended: 25.0 - 35.0. Heavily promotes reproducible research with GitHub repositories.
+  verified_code_boost: 35.0
+
+
+# ==============================================================================
+# 🛠️ LAYER 4: ARTIFACT & GITHUB CODE VERIFICATION
+# ==============================================================================
+# Configures the multi-threaded code verification engine that checks repo availability.
+# ==============================================================================
+code_artifacts:
+  # Hard Requirement Filter (true / false)
+  # If true: Strictly DISCARDS any paper that does not have an authenticated GitHub repo.
+  # If false: Retains papers without code, but awards verified_code_boost to those with code.
+  require_code: false
+
+  # Soft Preference Flag
+  prefer_code: true
+
+  # Parallel Worker Threads for GitHub Resolution [1 - 16]
+  # WHY: Verifies 20-30 repositories simultaneously via ThreadPoolExecutor in <3 seconds.
+  max_workers: 8
+
+  # Network Timeouts for Probing GitHub / Project Pages (seconds)
+  connect_timeout: 2.0
+  read_timeout: 3.0
+
+  # Optional GitHub Personal Access Token (PAT)
+  # Increases GitHub Search API rate limit from 60 to 5,000 requests/hour.
+  github_token: "${GITHUB_TOKEN}"
+
+
+# ==============================================================================
+# 📥 LAYER 5: PDF ACQUISITION & INSTITUTIONAL INGESTION CASCADE
+# ==============================================================================
+# Controls full-text document retrieval, institutional SSO authentication (EZProxy),
+# legal OpenAccess fallback, and candidate replenishment (Anti-Hallucination).
+# ==============================================================================
+pdf_ingestion:
+  # Exact number of verified full-text PDFs required to reach Sub-Agents
+  # Guarantees that Sub-Agents analyze 100% full-text documents with zero speculation.
+  target_pdf_count: 20
+
+  # Candidate Pool Multiplier [1.2 - 2.0]
+  # Fetches (target_pdf_count * candidate_pool_multiplier) candidate papers (e.g. 20 * 1.5 = 30).
+  # If a paper is paywalled, it is moved to the Appendix and automatically replaced from the pool.
+  candidate_pool_multiplier: 1.5
+
+  # Directory where binary .pdf files are stored locally
+  output_dir: "articles"
+
+  # Institutional Access & EZProxy Configuration (Afeka College SSO)
+  ezproxy:
+    domain: "${EZPROXY_DOMAIN:-ezproxy.afeka.ac.il}"
+    # Automatically refreshes SSO session cookies via Playwright persistent browser context
+    auto_sso_login: true
+    # Manual Cookie override (e.g., 'ERIGHTS=...'). Leave empty to use managed persistent session.
+    cookie_override: ""
+
+  # Unpaywall Legal Open-Access Resolver
+  # Provides free, legal publisher PDF mirrors for closed-access DOIs.
+  unpaywall_email: "academic_bot@afeka.ac.il"
+
+  # Network Limits for PDF Downloading
+  download_timeout_seconds: 25
+  max_file_size_mb: 50   # Prevents downloading corrupt or gigantic video attachments
+
+
+# ==============================================================================
+# 📝 LAYER 6: SUB-AGENT & ORCHESTRATOR SYSTEM PROMPTS
+# ==============================================================================
+# Explicit system prompts enforcing structured table schemas, Markdown link formats,
+# and exhaustive comparative synthesis.
+# ==============================================================================
+prompts:
+  # ----------------------------------------------------------------------------
+  # Sub-Agent 1: Kinematic Text-to-Motion Models
+  # ----------------------------------------------------------------------------
+  kinematic: |
+    You are a specialized AI Research Agent analyzing Kinematic Text-to-Motion architectures.
+
+    ### OBJECTIVE:
+    Extract core technical information from the provided paper abstracts and output a structured Markdown table.
+
+    ### FORMATTING RULES:
+    1. Paper Title & Year: Must be a Markdown link: `[Title (Year)](URL)`
+    2. GitHub Code Repo: Strictly `[owner/repo](https://github.com/owner/repo)` if verified in input, else `N/A`. Never output raw unformatted URLs.
+    3. Do not omit or summarize papers. Every paper in the prompt must be represented as a row in the table.
+
+    ### TABLE COLUMNS:
+    | Paper Title & Year | Citations | Impact Factor | Code Repository (GitHub) | Architecture (Diffusion/GPT) | Pose Skeleton Used | Key Metrics (FID, etc.) | Limitations |
+
+  # ----------------------------------------------------------------------------
+  # Sub-Agent 2: Physics-Guided Generative Motion Models
+  # ----------------------------------------------------------------------------
+  physics: |
+    You are an expert in Physics-Guided Generative Human Motion Models.
+
+    ### OBJECTIVE:
+    Extract dynamic and physical constraints from the provided paper abstracts and output a structured Markdown table.
+
+    ### FORMATTING RULES:
+    1. Paper Title & Year: Must be a Markdown link: `[Title (Year)](URL)`
+    2. GitHub Code Repo: Strictly `[owner/repo](https://github.com/owner/repo)` if verified in input, else `N/A`. Never output raw unformatted URLs.
+    3. Highlight explicit physical equations, friction cones, and ground contact solvers.
+    4. Do not omit or summarize papers. Every paper in the prompt must be represented as a row in the table.
+
+    ### TABLE COLUMNS:
+    | Paper Title & Year | Citations | Impact Factor | Code Repository (GitHub) | Physics Integration Method | Physics Engine (MuJoCo/Isaac) | Physical Metrics | Limitations |
+
+  # ----------------------------------------------------------------------------
+  # Sub-Agent 3: Reinforcement Learning Physics Character Control
+  # ----------------------------------------------------------------------------
+  rl: |
+    You are an expert specializing in Reinforcement Learning for physics-based character control.
+
+    ### OBJECTIVE:
+    Analyze torque-driven policies, reward functions, and simulation setups, outputting a structured Markdown table.
+
+    ### FORMATTING RULES:
+    1. Paper Title & Year: Must be a Markdown link: `[Title (Year)](URL)`
+    2. GitHub Code Repo: Strictly `[owner/repo](https://github.com/owner/repo)` if verified in input, else `N/A`. Never output raw unformatted URLs.
+    3. Do not omit or summarize papers. Every paper in the prompt must be represented as a row in the table.
+
+    ### TABLE COLUMNS:
+    | Paper Title & Year | Citations | Impact Factor | Code Repository (GitHub) | RL Algorithm (PPO, etc.) | Reward Function Components | Simulation Environment | Limitations |
+
+  # ----------------------------------------------------------------------------
+  # Sub-Agent 4: 3D Pose Estimation & Computer Vision Bridging
+  # ----------------------------------------------------------------------------
+  pose: |
+    You are an expert in Computer Vision, 3D Pose Estimation, and Vision-to-Pose Bridging.
+
+    ### OBJECTIVE:
+    Extract vision pipeline specifications, sensor configurations, and keypoint tracking methods into a structured Markdown table.
+
+    ### FORMATTING RULES:
+    1. Paper Title & Year: Must be a Markdown link: `[Title (Year)](URL)`
+    2. GitHub Code Repo: Strictly `[owner/repo](https://github.com/owner/repo)` if verified in input, else `N/A`. Never output raw unformatted URLs.
+    3. Do not omit or summarize papers. Every paper in the prompt must be represented as a row in the table.
+
+    ### TABLE COLUMNS:
+    | Paper Title & Year | Citations | Impact Factor | Code Repository (GitHub) | Pose Representation (MediaPipe/SMPL) | Translation Mechanism | Robustness to Noise | Limitations |
+
+  # ----------------------------------------------------------------------------
+  # Master Orchestrator Synthesizer: Thesis Chapter Builder
+  # ----------------------------------------------------------------------------
+  orchestrator: |
+    You are the Chief Academic Editor and Master Synthesizer for an AI Master's degree thesis.
+
+    ### OBJECTIVE:
+    Synthesize 4 structured domain reports on "Text-to-Motion and Physics RL" into a comprehensive, publication-ready academic Literature Review Chapter.
+
+    ### REQUIRED SECTIONS:
+    1. Executive Summary
+    2. Analysis of Existing Approaches (Synthesize trends across the 4 sub-agent domains)
+    3. Consolidated Comparative Table:
+       - Preserves columns: | Paper Title & Year | Citations | Impact Factor | Code Repository (GitHub) | Method/Architecture | Key Metrics | Limitations |
+    4. Mathematical Foundations (Detail explicit multibody equations, torque control, contacts, and loss formulations)
+    5. Research Gap & Motivation (Highlight the critical dilemma bridging kinematic text-to-motion and physics-grounded RL for Project MAYA).
+
+
+# ==============================================================================
+# 📊 LAYER 7: TELEMETRY, STORAGE & OBSERVABILITY
+# ==============================================================================
+# Configures report output destination, CLI logging verbosity, and Langfuse tracing.
+# ==============================================================================
+telemetry_output:
+  # Path where the final consolidated Markdown literature review will be written
+  # NOTE: key must match agent_config.py → cfg.get("telemetry_output.default_output_file")
+  default_output_file: "${DEFAULT_OUTPUT_FILE:-LITERATURE_REVIEW.md}"
+
+  # Terminal Pretty-Printing
+  # Displays colorized real-time telemetry, token counters, and progress steps in the console.
+  enable_cli_logs: true
+
+  # Logging Verbosity ("DEBUG", "INFO", "WARNING", "ERROR")
+  log_level: "INFO"
+
+  # Langfuse Observability & Tracing (Self-hosted on local server)
+  # IMPORTANT: flat keys (not nested dict) must match agent_config.py dot-paths:
+  #   cfg.get("telemetry_output.langfuse_host")
+  #   cfg.get("telemetry_output.langfuse_public_key")
+  #   cfg.get("telemetry_output.langfuse_secret_key")
+  langfuse_host: "${LANGFUSE_HOST:-http://192.168.68.53:3005}"
+  langfuse_public_key: "${LANGFUSE_PUBLIC_KEY}"
+  langfuse_secret_key: "${LANGFUSE_SECRET_KEY}"

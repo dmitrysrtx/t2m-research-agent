@@ -108,33 +108,44 @@ pip install -r requirements.txt
 playwright install chromium
 ```
 
-### 2. Configure Environment (`.env` & `agent_config.py`)
-Copy the template and edit your credentials in `.env`:
+### 2. Configure Environment (`pipeline_config.yaml`, `.env`, & `agent_config.py`)
+
+The pipeline utilizes a layered configuration architecture where **`pipeline_config.yaml`** serves as the primary declarative Single Source of Truth (SSOT), loaded via **`src/core/config_loader.py` (`cfg`)**:
+
+1. **Copy `.env.example` to `.env`** for sensitive credentials and local overrides:
 ```bash
 cp .env.example .env
 ```
 
-`agent_config.py` (aliased to `config.py` for backward compatibility) acts as the **Single Source of Truth (SSOT)** for all system parameters, academic fetcher defaults, and LLM configuration (avoiding namespace shadowing inside Docker containers):
-- `OPENROUTER_API_KEY`: API Key for LLM inference (OpenRouter / OpenAI / local vLLM).
-- `API_BASE_URL`: Endpoint URL (defaults to `https://openrouter.ai/api/v1`).
-- `MODEL_NAME`: Target model (defaults to `anthropic/claude-3.5-sonnet`).
-- `MAX_RESULTS_PER_DOMAIN`: Search limit per domain (defaults to `5`).
-- `ENABLE_IEEE`, `ENABLE_SCHOLAR`, `ENABLE_ARXIV`, `ENABLE_SEMANTIC_SCHOLAR`: Boolean fetcher toggles.
-- `REQUIRE_CODE`: Strictly require verified open-source GitHub code repositories for all selected papers (defaults to `False`).
-- `PREFER_CODE`: Prefer and prioritize papers with verified open-source GitHub code repositories (defaults to `True`).
-- `CODE_SCORE_BOOST`: Ranking score boost awarded to papers with verified code (defaults to `35.0`).
-- `SEMANTIC_SCHOLAR_FIELDS_OF_STUDY`: Restrict Semantic Scholar queries to specific domains (defaults to `"Computer Science,Engineering"`).
-- `SEMANTIC_SCHOLAR_API_KEY`: Optional API Key for Semantic Scholar high rate limits.
-- `SEMANTIC_SCHOLAR_MIN_CITATIONS`: Minimum citations threshold for Semantic Scholar (defaults to `0`).
-- `DEFAULT_SEARCH_QUERY`: Default prompt fallback.
-- `DEFAULT_OUTPUT_FILE`: Master report path (defaults to `LITERATURE_REVIEW.md`).
-- `IEEE_INSTITUTION`, `IEEE_USERNAME`, `IEEE_PASSWORD`: Institutional credentials for automated 2FA login.
-- `EZPROXY_DOMAIN`, `AUTO_SSO_LOGIN`: EZproxy host and auto-login flag.
-- `LANGFUSE_HOST`: Langfuse v3 self-hosted instance endpoint (defaults to `http://192.168.68.53:3005`).
-- `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`: Telemetry project credentials.
-- `ENABLE_CLI_LOGS`: Toggle clean terminal progress output (`True` / `False`).
+2. **Master Configuration Manifest (`pipeline_config.yaml`)**:
+All parameters across the 7 pipeline layers are structured into domains with `${VAR_NAME}` / `${VAR_NAME:-default}` environment interpolation:
+- **`llm`**: `model_name`, `base_url`, `api_key`, temperatures (`subagent_temperature`, `orchestrator_temperature`), token limits.
+- **`search_discovery`**: `default_query`, `max_results_per_domain`, engine toggles (`enable_ieee`, `enable_scholar`, `enable_arxiv`, `enable_semantic_scholar`), `fields_of_study`, `min_citations`.
+- **`scoring_ranking`**: `frontier_bucket_ratio`, `foundational_bucket_ratio`, `recent_year_window`, `venue_tier_1_weight`, `venue_tier_2_weight`, `venue_tier_3_weight`, `verified_code_boost`.
+- **`code_artifacts`**: `require_code`, `prefer_code`, `github_max_workers`, socket connect/read timeouts.
+- **`pdf_ingestion`**: `target_pdf_count`, `candidate_pool_multiplier`, `ezproxy_domain`, `auto_sso_login`, `unpaywall_email`, `download_timeout`.
+- **`prompts`**: Full multi-line Markdown system prompts for all 4 domain sub-agents and the Master Orchestrator.
+- **`telemetry_output`**: `default_output_file`, `enable_cli_logs`, `langfuse_host`, `langfuse_public_key`, `langfuse_secret_key`.
+
+3. **Preset Operational Profiles (`active_profile`)**:
+Switch behavioral presets instantly via `active_profile` in `pipeline_config.yaml` or programmatically via `cfg.set_profile(name)`:
+- **`thesis_master`** (Default): Comprehensive Master's Thesis foundations (60% SOTA / 40% Foundational, min 5 citations, Tier 1 venue boost $2.0\times$).
+- **`frontier_sota`**: Rapid recent exploration (85% SOTA / 15% Foundational, 1-year window, 0 citation barrier).
+- **`code_first`**: Reproducibility and code audit (strictly enforces `require_code: true`, +50.0 code boost, 12 parallel workers).
+
+4. **Standalone Config Diagnostics & Verification**:
+```bash
+# Verify YAML parsing, environment variable resolution, and active profile
+python3 -m src.core.config_loader
+
+# Verify backward-compatible agent_config bridge
+python3 agent_config.py
+```
+
+`agent_config.py` (aliased to `config.py`) imports defaults directly from `cfg`, ensuring 100% backward compatibility for existing scripts and OpenWebUI.
 
 ---
+
 
 ## 🔐 Authentication & Session Management (`src/auth/`)
 
@@ -254,6 +265,7 @@ python3 main.py
    - `OPENROUTER_API_KEY` (Configure API key for LLM queries)
    - `AUTO_SSO_LOGIN` (Auto-trigger mobile push 2FA on phone when cookies expire)
    - `EZPROXY_COOKIE` (Optional raw cookie override)
+   - `KINEMATIC_PROMPT`, `PHYSICS_PROMPT`, `RL_PROMPT`, `POSE_PROMPT`, `ORCHESTRATOR_PROMPT` (Clean, multi-line structured Markdown prompts with explicit objectives, formatting rules, and column definitions)
 4. Submit your research prompt to generate a complete multi-agent literature review!
 
 ---

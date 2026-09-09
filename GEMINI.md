@@ -13,7 +13,9 @@ The framework fetches paper metadata from academic engines (IEEE Xplore via EZpr
 ```
 t2m-research-agent/
 ├── main.py                     # CLI entry point (runs pipeline runner engine)
-├── config.py                   # Environment configuration (LLM models, API keys, limits)
+├── config.py                   # Environment configuration alias
+├── agent_config.py             # Backward-compatible configuration bridge
+├── pipeline_config.yaml        # Master YAML Configuration Manifest (Single Source of Truth)
 ├── Makefile                    # Automation targets (setup, run, enrich, clean)
 ├── README.md                   # Public repository documentation
 ├── Gemini.md                   # Agent system guidelines & project map (this file)
@@ -43,7 +45,9 @@ t2m-research-agent/
     ├── agents/                 # Layer 3: Domain Agents & Synthesis
     │   ├── orchestrator.py     # Master Orchestrator prompt & synthesis logic
     │   └── sub_agents.py       # Domain expert sub-agents (Kinematic, Physics, RL, Pose)
-    ├── core/                   # Layer 4: Pipeline Execution Engine
+    ├── core/                   # Layer 4: Configuration & Pipeline Execution Engine
+    │   ├── __init__.py         # Core package exports with lazy loading
+    │   ├── config_loader.py    # Singleton PipelineConfig, env interpolator & profile switcher
     │   └── pipeline_runner.py  # High-level pipeline coordinator & review assembler
     ├── telemetry/              # Layer 5: Decoupled Telemetry & Event Dispatcher
     │   ├── __init__.py         # Package exports & get_telemetry() factory
@@ -61,6 +65,77 @@ t2m-research-agent/
 ```
 
 ## Architectural Decision Log
+
+### 2026-09-09: Langfuse SDK v4 Compatibility Fix & Telemetry Activation (`langfuse_sink.py`, `pipeline_config.yaml`)
+- **Goal**: Fix silent telemetry failure — traces not reaching Langfuse despite correct credentials and reachable server.
+- **Root Causes & Key Changes**:
+  1. **BUG #1 — YAML Key Path Mismatch (`pipeline_config.yaml`)**:
+     - `telemetry_output` section stored Langfuse credentials under nested dict `langfuse.host / .public_key / .secret_key`.
+     - `agent_config.py` reads via flat dot-paths `cfg.get("telemetry_output.langfuse_host")`, which returned `""`.
+     - `TelemetryManager.get_telemetry()` checks `if getattr(config, "LANGFUSE_PUBLIC_KEY", "")` → was `""` → `LangfuseHandler` **never registered**.
+     - **Fix**: Flattened YAML keys to `langfuse_host`, `langfuse_public_key`, `langfuse_secret_key` matching `agent_config.py` paths.
+     - Also fixed `default_output_report` → `default_output_file` to match `agent_config.py` read path.
+  2. **BUG #2 — Langfuse SDK v4 requires `@observe()` context (`langfuse_sink.py`)**:
+     - `create_event()` and `start_observation()` exist in SDK v4.x but require an active OTEL trace context to attach child spans.
+     - Without `@observe()` wrapping, all child observations had no parent trace → silently dropped.
+     - **Fix**: Wrapped `_dispatch_event()` call inside `@observe(name=...)` in `handle()`. All events now arrive in Langfuse as properly nested traces.
+     - Note: Raw OTEL spans from a custom `tracer.start_as_current_span()` are filtered by Langfuse's `should_export_span` filter unless created via `langfuse-sdk` instrumentation scope.
+  3. **Diagnostics Tooling**:
+     - Added `test_langfuse_diag.py` — standalone script with `auth_check()`, `@observe()` trace + child spans, and explicit `flush()`.
+     - Confirmed HTTP 200 on `POST /api/public/otel/v1/traces` — telemetry now flows end-to-end.
+  4. **File Permissions**: `0o666` + `dmitryx:dmitryx` on all modified files.
+
+### 2026-09-09: Master YAML Configuration Manifest (`pipeline_config.yaml`) & Singleton Config Loader (`src/core/config_loader.py`)
+- **Goal**: Centralize fragmented system parameters, prompt templates, and scoring weights into a declarative Master YAML manifest (`pipeline_config.yaml`), provide recursive environment variable interpolation (`${VAR_NAME}` / `${VAR_NAME:-default}`), support 1-key behavioral preset switching (`thesis_master`, `frontier_sota`, `code_first`), and maintain 100% backward compatibility via `agent_config.py`.
+- **Architectural Components & Key Changes**:
+  1. **Master Manifest (`pipeline_config.yaml`)**:
+     - Partitioned configuration across 7 distinct layers: `llm`, `search_discovery`, `scoring_ranking`, `code_artifacts`, `pdf_ingestion`, `prompts`, and `telemetry_output`.
+     - Secured sensitive API credentials (`OPENROUTER_API_KEY`, `SEMANTIC_SCHOLAR_API_KEY`, `LANGFUSE_SECRET_KEY`) using runtime environment variable interpolation syntax.
+     - Embedded clean multi-line Markdown prompt templates for all 4 domain sub-agents and the Master Orchestrator directly into the YAML manifest.
+  2. **Singleton Configuration Provider (`src/core/config_loader.py`)**:
+     - Implemented `PipelineConfig` singleton with automatic `.env` pre-loading via `python-dotenv`.
+     - Implemented recursive regex-based string expansion for `${VAR}` and `${VAR:-default}`.
+     - Implemented recursive dictionary deep-merge (`_deep_merge`) supporting both nested dictionaries and dot-notated profile overrides.
+     - Added `get(path, default)`, `set_profile(name)`, `get_profile()`, `list_profiles()`, and `to_dict()` methods.
+     - Added `cfg.reload()` to guarantee hot-reload on dynamic module reload.
+  3. **Backward-Compatible Bridge (`agent_config.py`)**:
+     - Refactored all constants (`API_KEY`, `MODEL_NAME`, `MAX_RESULTS_PER_DOMAIN`, etc.) to draw defaults from `cfg.get(...)` while allowing direct environment overrides.
+     - Preserved all exports and types, keeping file length at 93 lines (< 150 lines SRP limit).
+  4. **Dynamic Hot-Reloading (`openwebui/t2m_pipeline.py`)**:
+     - Registered `src.core.config_loader` in the dynamic hot-reload block so YAML configuration edits apply immediately without Docker container restart.
+  5. **Agent & Orchestrator Integration (`sub_agents.py`, `orchestrator.py`)**:
+     - Default system prompts now bind to `cfg.get("prompts.kinematic")` etc., with inlined fallbacks.
+  6. **Host Ownership & Standalone Testability**:
+     - Maintained host permissions `0o666` and `dmitryx:dmitryx` ownership across all created/modified files.
+     - Included standalone `if __name__ == '__main__':` test blocks in `config_loader.py` and `agent_config.py`.
+
+### 2026-09-08: Concrete Schema Typing in Pipeline.Valves for Multi-Line Textarea Rendering
+- **Goal**: Resolve OpenWebUI rendering prompt valves as single-line `<input type="text">` instead of multi-line expandable `<textarea>` elements.
+- **Root Causes & Key Changes**:
+  1. **Pydantic OpenAPI Schema `anyOf` Elimination (`openwebui/t2m_pipeline.py`)**:
+     - `Optional[str]` emits `{"anyOf": [{"type": "string"}, {"type": "null"}]}` instead of top-level `{"type": "string"}`.
+     - OpenWebUI's `Valves.svelte` checks `propertySpec.type !== 'string'`, treating `anyOf` schemas as generic inputs and rendering single-line text inputs.
+     - Replaced all `Optional[...]` types in `Pipeline.Valves` with concrete types (`str`, `bool`, `int`) and explicit default values.
+     - Verified `/t2m_pipeline/valves/spec` emits top-level `{"type": "string"}` for all prompt fields, enabling native multi-line `<textarea>` rendering with resize handles.
+  2. **Null Value Sanitization (`openwebui/t2m_pipeline/valves.json`)**:
+     - Sanitized `EZPROXY_COOKIE: null` to `""` in stored `valves.json` to prevent Pydantic string validation errors during container startup.
+  3. **Container Cycle & Cache Refresh**:
+     - Restarted `open-webui-pipelines` and refreshed OpenWebUI in-memory models cache via `/api/models?refresh=true`.
+     - Preserved host file ownership `dmitryx:dmitryx` and `0o666` permissions.
+
+### 2026-09-08: Clean Multi-Line Formatting for Sub-Agent System Prompts & OpenWebUI Valves
+- **Goal**: Refactor sub-agent and orchestrator system prompt constants into clean, structured multi-line Markdown with explicit section breaks (`### OBJECTIVE:`, `### FORMATTING RULES:`, `### TABLE COLUMNS:`), ensuring OpenWebUI Valves textareas render legible, beautifully spaced prompts instead of compressed single-line strings.
+- **Root Causes & Key Changes**:
+  1. **Structured Multi-Line Markdown Templates (`src/agents/sub_agents.py` & `src/agents/orchestrator.py`)**:
+     - Converted `KINEMATIC_SYSTEM_PROMPT`, `PHYSICS_DIFFUSION_SYSTEM_PROMPT`, `RL_CONTROL_SYSTEM_PROMPT`, and `MEDIAPIPE_POSE_SYSTEM_PROMPT` into clean, human-readable multi-line Markdown templates.
+     - Embedded anti-laziness ("Every paper in the prompt must be represented as a row in the table") and GitHub link rules (`[owner/repo](https://github.com/owner/repo)` or `N/A`) directly into the `### FORMATTING RULES:` section, eliminating concatenated strings.
+     - Refactored `ORCHESTRATOR_SYSTEM_PROMPT` to feature clean sections (`### OBJECTIVE:`, `### REQUIRED SECTIONS:`, `### STYLE GUIDELINES:`).
+  2. **Valve Default Synchronization (`openwebui/t2m_pipeline.py`)**:
+     - Verified `Pipeline.Valves` cleanly binds these updated multi-line templates as default values for `KINEMATIC_PROMPT`, `PHYSICS_PROMPT`, `RL_PROMPT`, `POSE_PROMPT`, and `ORCHESTRATOR_PROMPT`.
+  3. **Stored Valve JSON Synchronization (`openwebui/t2m_pipeline/valves.json`)**:
+     - Synchronized `openwebui/t2m_pipeline/valves.json` to store the new clean multi-line formatting so existing sessions immediately display the beautifully formatted prompts in the OpenWebUI settings panel.
+  4. **Standalone Testability & File Length**:
+     - Added runnable `if __name__ == '__main__':` test block to `src/agents/orchestrator.py` (54 lines) and validated `src/agents/sub_agents.py` (164 lines), keeping both strictly under 200 lines with `0o666` host permissions (`dmitryx:dmitryx`).
 
 ### 2026-09-08: OpenWebUI Model Discovery, Container IP Bridge Cache & LLM Valve Synchronization
 - **Goal**: Resolve `Model not found` in OpenWebUI chat, diagnose container bridge IP caching following pipeline container restarts, expose configurable backend LLM settings (`MODEL_NAME`, `API_BASE_URL`, `OPENROUTER_API_KEY`) in OpenWebUI Valves, and fix pipeline registration in the OpenWebUI Pipelines framework.

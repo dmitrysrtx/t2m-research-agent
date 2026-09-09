@@ -1,9 +1,12 @@
+import os
+import re
 import time
 from typing import List, Dict, Any, Optional
 import requests
 import agent_config as config
 from src.utils.logger import logger
 from src.fetchers.github_finder import extract_github_url
+from src.fetchers.venue_ranker import enrich_paper_venue
 
 S2_FIELDS = "title,year,abstract,citationCount,influentialCitationCount,venue,publicationVenue,url,paperId,openAccessPdf,externalIds"
 
@@ -29,14 +32,19 @@ def _parse_paper_item(item: Dict[str, Any], min_citations: int = 0) -> Optional[
     ext_ids = item.get('externalIds') or {}
     arxiv_id = ext_ids.get('ArXiv') or ext_ids.get('arxiv')
     doi = ext_ids.get('DOI') or ext_ids.get('doi')
+    if not arxiv_id and doi:
+        m = re.search(r'arxiv\.(\d{4}\.\d{4,5}(?:v\d+)?)', str(doi), re.IGNORECASE)
+        if m:
+            arxiv_id = m.group(1)
+
     arxiv_url = f"https://arxiv.org/abs/{arxiv_id}" if arxiv_id else None
     if not pdf_url and arxiv_id:
-        pdf_url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
+        pdf_url = f"https://export.arxiv.org/pdf/{arxiv_id}.pdf"
 
     pub_venue = item.get('publicationVenue')
     venue_name = (pub_venue.get('name') if isinstance(pub_venue, dict) else None) or item.get('venue') or 'Unknown'
 
-    return {
+    paper_dict = {
         "title": (item.get('title') or '').strip(),
         "year": str(item.get('year') or ''),
         "abstract": abstract_text,
@@ -51,6 +59,7 @@ def _parse_paper_item(item: Dict[str, Any], min_citations: int = 0) -> Optional[
         "venue": venue_name,
         "source": "SemanticScholar"
     }
+    return enrich_paper_venue(paper_dict)
 
 
 def _query_endpoint(

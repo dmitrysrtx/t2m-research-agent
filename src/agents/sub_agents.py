@@ -6,6 +6,7 @@ if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
 from agent_config import API_KEY, BASE_URL, MODEL_NAME
+from src.core.config_loader import cfg
 
 import time
 from src.telemetry import get_telemetry
@@ -33,7 +34,8 @@ def run_agent(system_prompt, user_prompt, agent_name="sub_agent", telemetry=None
             ],
             temperature=0.2
         )
-        content = response.choices[0].message.content
+        raw_content = response.choices[0].message.content
+        content = raw_content if raw_content is not None else ""
         duration = time.time() - start_t
         usage = getattr(response, "usage", None)
         total_tokens = getattr(usage, "total_tokens", None) if usage else None
@@ -72,43 +74,64 @@ def format_papers_for_prompt(papers_data):
         )
     return prompt
 
-ANTI_LAZY_RULE = (
-    "\nCRITICAL INSTRUCTION: You MUST include EVERY single paper provided in the input text in your table. Do not skip, summarize, or omit ANY paper. If there are 15 papers in the prompt, there must be 15 rows in your table!\n"
-    "CRITICAL GITHUB RULE: For the 'Code Repository (GitHub)' column, you MUST strictly use the exact repository from 'GitHub Code Repo:' formatted as [owner/repo](https://github.com/owner/repo) (e.g. [GuyTevet/motion-diffusion-model](https://github.com/GuyTevet/motion-diffusion-model)). If 'GitHub Code Repo:' is 'N/A', you MUST write 'N/A'. Never output raw unformatted URLs, and do NOT extract unverified repositories from abstract text!"
-)
+# Default System Prompts (YAML Configuration Manifest with Inlined Fallbacks)
+KINEMATIC_SYSTEM_PROMPT = cfg.get("prompts.kinematic") or """You are a specialized AI Research Agent analyzing Kinematic Text-to-Motion architectures.
 
-# Default System Prompts
-KINEMATIC_SYSTEM_PROMPT = """
-You are a highly specialized AI research agent analyzing kinematic Text-to-Motion models.
-Extract core information from the provided abstracts and return a structured Markdown table.
-Format the "Paper Title & Year" column as a Markdown hyperlink: [Title (Year)](URL).
-Format the "Code Repository (GitHub)" column strictly as [owner/repo](https://github.com/owner/repo) if a verified URL is provided in "GitHub Code Repo:", or "N/A" if it says "N/A". Never output raw unformatted URLs.
-Columns: | Paper Title & Year | Citations | Impact Factor | Code Repository (GitHub) | Architecture (Diffusion/GPT) | Pose Skeleton Used | Key Metrics (FID, etc.) | Limitations |
-Limit response to ONLY the table.""" + ANTI_LAZY_RULE
+### OBJECTIVE:
+Extract core technical information from the provided paper abstracts and output a strictly structured Markdown table.
 
-PHYSICS_DIFFUSION_SYSTEM_PROMPT = """
-You are an expert in Physics-Guided Generative Motion Models.
-Extract core information from the provided abstracts and return a structured Markdown table.
-Format the "Paper Title & Year" column as a Markdown hyperlink: [Title (Year)](URL).
-Format the "Code Repository (GitHub)" column strictly as [owner/repo](https://github.com/owner/repo) if a verified URL is provided in "GitHub Code Repo:", or "N/A" if it says "N/A". Never output raw unformatted URLs.
-Columns: | Paper Title & Year | Citations | Impact Factor | Code Repository (GitHub) | Physics Integration Method | Physics Engine (MuJoCo/Isaac) | Physical Metrics | Limitations |
-Limit response to ONLY the table.""" + ANTI_LAZY_RULE
+### FORMATTING RULES:
+1. Paper Title & Year: Must be a Markdown link: `[Title (Year)](URL)`
+2. GitHub Code Repo: Strictly `[owner/repo](https://github.com/owner/repo)` if verified in input, else `N/A`. Never output raw unformatted URLs.
+3. Do not omit or summarize papers. Every paper in the prompt must be represented as a row in the table.
 
-RL_CONTROL_SYSTEM_PROMPT = """
-You are an expert specializing in Reinforcement Learning for physics-based character control.
-Extract core information from the provided abstracts and return a structured Markdown table.
-Format the "Paper Title & Year" column as a Markdown hyperlink: [Title (Year)](URL).
-Format the "Code Repository (GitHub)" column strictly as [owner/repo](https://github.com/owner/repo) if a verified URL is provided in "GitHub Code Repo:", or "N/A" if it says "N/A". Never output raw unformatted URLs.
-Columns: | Paper Title & Year | Citations | Impact Factor | Code Repository (GitHub) | RL Algorithm (PPO, etc.) | Reward Function Components | Simulation Environment | Limitations |
-Limit response to ONLY the table.""" + ANTI_LAZY_RULE
+### TABLE COLUMNS:
+| Paper Title & Year | Citations | Impact Factor | Code Repository (GitHub) | Architecture (Diffusion/GPT) | Pose Skeleton Used | Key Metrics (FID, etc.) | Limitations |
+"""
 
-MEDIAPIPE_POSE_SYSTEM_PROMPT = """
-You are an expert in computer vision, 3D pose estimation, and vision-to-pose bridging.
-Extract core information from the provided abstracts and return a structured Markdown table.
-Format the "Paper Title & Year" column as a Markdown hyperlink: [Title (Year)](URL).
-Format the "Code Repository (GitHub)" column strictly as [owner/repo](https://github.com/owner/repo) if a verified URL is provided in "GitHub Code Repo:", or "N/A" if it says "N/A". Never output raw unformatted URLs.
-Columns: | Paper Title & Year | Citations | Impact Factor | Code Repository (GitHub) | Pose Representation (MediaPipe/SMPL) | Translation Mechanism | Robustness to Noise | Limitations |
-Limit response to ONLY the table.""" + ANTI_LAZY_RULE
+PHYSICS_DIFFUSION_SYSTEM_PROMPT = cfg.get("prompts.physics") or """You are an expert in Physics-Guided Generative Human Motion Models.
+
+### OBJECTIVE:
+Extract dynamic and physical constraints from the provided paper abstracts and output a structured Markdown table.
+
+### FORMATTING RULES:
+1. Paper Title & Year: Must be a Markdown link: `[Title (Year)](URL)`
+2. GitHub Code Repo: Strictly `[owner/repo](https://github.com/owner/repo)` if verified in input, else `N/A`. Never output raw unformatted URLs.
+3. Highlight explicit physical equations, friction cones, and ground contact solvers.
+4. Do not omit or summarize papers. Every paper in the prompt must be represented as a row in the table.
+
+### TABLE COLUMNS:
+| Paper Title & Year | Citations | Impact Factor | Code Repository (GitHub) | Physics Integration Method | Physics Engine (MuJoCo/Isaac) | Physical Metrics | Limitations |
+"""
+
+RL_CONTROL_SYSTEM_PROMPT = cfg.get("prompts.rl") or """You are an expert specializing in Reinforcement Learning for physics-based character control.
+
+### OBJECTIVE:
+Analyze torque-driven policies, reward functions, and simulation setups, outputting a structured Markdown table.
+
+### FORMATTING RULES:
+1. Paper Title & Year: Must be a Markdown link: `[Title (Year)](URL)`
+2. GitHub Code Repo: Strictly `[owner/repo](https://github.com/owner/repo)` if verified in input, else `N/A`. Never output raw unformatted URLs.
+3. Do not omit or summarize papers. Every paper in the prompt must be represented as a row in the table.
+
+### TABLE COLUMNS:
+| Paper Title & Year | Citations | Impact Factor | Code Repository (GitHub) | RL Algorithm (PPO, etc.) | Reward Function Components | Simulation Environment | Limitations |
+"""
+
+MEDIAPIPE_POSE_SYSTEM_PROMPT = cfg.get("prompts.pose") or """You are an expert in Computer Vision, 3D Pose Estimation, and Vision-to-Pose Bridging.
+
+### OBJECTIVE:
+Extract vision pipeline specifications, sensor configurations, and keypoint tracking methods into a structured Markdown table.
+
+### FORMATTING RULES:
+1. Paper Title & Year: Must be a Markdown link: `[Title (Year)](URL)`
+2. GitHub Code Repo: Strictly `[owner/repo](https://github.com/owner/repo)` if verified in input, else `N/A`. Never output raw unformatted URLs.
+3. Do not omit or summarize papers. Every paper in the prompt must be represented as a row in the table.
+
+### TABLE COLUMNS:
+| Paper Title & Year | Citations | Impact Factor | Code Repository (GitHub) | Pose Representation (MediaPipe/SMPL) | Translation Mechanism | Robustness to Noise | Limitations |
+"""
+
 
 
 def analyze_kinematic(papers_data, custom_prompt=None, telemetry=None):

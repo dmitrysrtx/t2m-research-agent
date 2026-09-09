@@ -20,8 +20,11 @@ except ImportError:
 
 class LangfuseHandler(BaseHandler):
     """
-    Asynchronous background telemetry sink for self-hosted Langfuse v3.
-    Processes events without printing anything to stdout.
+    Asynchronous background telemetry sink for self-hosted Langfuse v3 (SDK v4.x).
+
+    Uses `@observe()` decorator pattern as a top-level trace context.
+    `start_observation()` and `create_event()` are called inside that context
+    so they are correctly attached as child spans.
     Gracefully degrades to a no-op if unconfigured or unreachable.
     """
 
@@ -45,7 +48,6 @@ class LangfuseHandler(BaseHandler):
             return
         if not self.public_key or not self.secret_key:
             return
-
         try:
             self.client = Langfuse(
                 public_key=self.public_key,
@@ -53,7 +55,6 @@ class LangfuseHandler(BaseHandler):
                 host=self.host,
                 debug=False,
             )
-            # Lightweight verification: auth_check can be skipped or tested safely
             self._enabled = True
         except Exception:
             self._enabled = False
@@ -63,76 +64,84 @@ class LangfuseHandler(BaseHandler):
     def is_enabled(self) -> bool:
         return self._enabled and self.client is not None
 
-    def handle(self, event: TelemetryEvent) -> None:
-        if not self.is_enabled:
-            return
-
+    def _dispatch_event(self, event: TelemetryEvent) -> None:
+        """Inner dispatch called inside an @observe() context so child spans are attached."""
         etype = event.event_type
         src = event.source
         payload = event.payload or {}
 
-        try:
-            if etype == EventType.THINKING.value:
-                thought = payload.get("thought") or payload.get("message") or ""
+        if etype == EventType.THINKING.value:
+            thought = payload.get("thought") or payload.get("message") or ""
+            self.client.create_event(
+                name=f"thinking:{src}",
+                input={"thought": thought[:500], **{k: v for k, v in payload.items() if k != "thought"}},
+                metadata={"source": src},
+            )
+
+        elif etype == EventType.TOOL_CALL.value:
+            tool_name = payload.get("tool", f"tool_{src}")
+            span_key = f"{src}:{tool_name}"
+            span = self.client.start_observation(
+                name=tool_name,
+                as_type="tool",
+                input=payload,
+                metadata={"source": src},
+            )
+            self._active_spans[span_key] = span
+
+        elif etype == EventType.TOOL_RESULT.value:
+            tool_name = payload.get("tool", f"tool_{src}")
+            span_key = f"{src}:{tool_name}"
+            span = self._active_spans.pop(span_key, None)
+            if span:
+                span.update(output=payload.get("result", payload))
+                span.end()
+            else:
                 self.client.create_event(
-                    name=f"thinking:{src}",
-                    input={"thought": thought, **payload},
-                    metadata={"source": src}
-                )
-
-            elif etype == EventType.TOOL_CALL.value:
-                tool_name = payload.get("tool", f"tool_{src}")
-                span_key = f"{src}:{tool_name}"
-                span = self.client.start_observation(
-                    name=tool_name,
-                    as_type="tool",
-                    input=payload,
-                    metadata={"source": src}
-                )
-                self._active_spans[span_key] = span
-
-            elif etype == EventType.TOOL_RESULT.value:
-                tool_name = payload.get("tool", f"tool_{src}")
-                span_key = f"{src}:{tool_name}"
-                span = self._active_spans.pop(span_key, None)
-                if span:
-                    span.update(output=payload.get("result", payload))
-                    span.end()
-                else:
-                    self.client.create_event(
-                        name=f"result:{tool_name}",
-                        output=payload,
-                        metadata={"source": src}
-                    )
-
-            elif etype == EventType.ERROR.value:
-                err_msg = payload.get("error") or payload.get("message", "Error")
-                self.client.create_event(
-                    name=f"error:{src}",
-                    level="ERROR",
-                    status_message=str(err_msg),
+                    name=f"result:{tool_name}",
                     output=payload,
-                    metadata={"source": src}
+                    metadata={"source": src},
                 )
 
-            elif etype == EventType.RESPONSE.value:
-                content = payload.get("content", "")
-                tokens = payload.get("tokens")
-                usage = {"total": tokens} if tokens else None
-                self.client.start_observation(
-                    name=f"response:{src}",
-                    as_type="generation",
-                    output=content[:2000] if isinstance(content, str) else content,
-                    usage_details=usage,
-                    metadata={"source": src}
-                ).end()
+        elif etype == EventType.ERROR.value:
+            err_msg = payload.get("error") or payload.get("message", "Error")
+            self.client.create_event(
+                name=f"error:{src}",
+                level="ERROR",
+                status_message=str(err_msg)[:500],
+                output=payload,
+                metadata={"source": src},
+            )
 
+        elif etype == EventType.RESPONSE.value:
+            content = payload.get("content", "")
+            tokens = payload.get("tokens")
+            usage = {"total": tokens} if tokens else None
+            self.client.start_observation(
+                name=f"response:{src}",
+                as_type="generation",
+                output=content[:2000] if isinstance(content, str) else content,
+                usage_details=usage,
+                metadata={"source": src},
+            ).end()
+
+    def handle(self, event: TelemetryEvent) -> None:
+        if not self.is_enabled:
+            return
+        try:
+            # Wrap dispatch in @observe() so all child create_event/start_observation
+            # calls are attached to a proper Langfuse trace context (SDK v4 requirement).
+            @observe(name=f"t2m-agent:{event.event_type}")
+            def _traced():
+                self._dispatch_event(event)
+
+            _traced()
         except Exception:
-            # Absolute safety: Langfuse issues must never crash agent execution or print to stdout
+            # Absolute safety: Langfuse issues must never crash agent execution
             pass
 
     def close(self) -> None:
-        """Flushes buffered events asynchronously."""
+        """Flushes buffered events and closes all active spans."""
         if self.is_enabled and self.client:
             try:
                 for span in self._active_spans.values():
@@ -144,12 +153,24 @@ class LangfuseHandler(BaseHandler):
 
 
 if __name__ == "__main__":
+    import os
+    from dotenv import load_dotenv
+    load_dotenv()
+
     print("==================================================")
-    print("📡 LangfuseHandler Standalone Test")
+    print("📡 LangfuseHandler Standalone Test (SDK v4 / @observe)")
     print("==================================================")
     handler = LangfuseHandler()
     print(f"[*] Handler active: {handler.is_enabled}")
-    print(f"[*] Target Host: {handler.host}")
+    print(f"[*] Target Host:    {handler.host}")
+    if handler.is_enabled:
+        print("[*] Auth check ...", end=" ", flush=True)
+        ok = handler.client.auth_check()
+        print("✅ OK" if ok else "❌ FAILED")
     handler.handle(TelemetryEvent("THINKING", {"thought": "Verifying Langfuse sink"}, "test"))
+    handler.handle(TelemetryEvent("TOOL_CALL", {"tool": "arxiv_fetcher", "args": "query=t2m"}, "test"))
+    handler.handle(TelemetryEvent("TOOL_RESULT", {"tool": "arxiv_fetcher", "result": "3 papers found"}, "test"))
+    handler.handle(TelemetryEvent("RESPONSE", {"content": "Synthesis done.", "tokens": 42}, "test"))
     handler.close()
+    print("[*] Flush complete — check Langfuse dashboard.")
     print("==================================================")
