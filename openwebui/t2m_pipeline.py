@@ -89,6 +89,10 @@ class Pipeline:
             default=config.AUTO_SSO_LOGIN_DEFAULT,
             description="Automatically renew institutional session via persistent profile (silent renewal or mobile push 2FA if re-authentication needed)"
         )
+        CLEAR_ARTICLES_DIR: bool = Field(
+            default=config.CLEAR_ARTICLES_DIR,
+            description="Clear the articles directory before each run to avoid counting files from previous runs"
+        )
         KINEMATIC_PROMPT: Optional[str] = Field(
             default=KINEMATIC_SYSTEM_PROMPT,
             description="System Prompt for Kinematic Motion Sub-Agent (Markdown supported)"
@@ -223,6 +227,7 @@ class Pipeline:
         ezproxy_cookie = "" if not self.valves.EZPROXY_COOKIE else self.valves.EZPROXY_COOKIE
         ezproxy_domain = config.EZPROXY_DOMAIN_DEFAULT if not self.valves.EZPROXY_DOMAIN else self.valves.EZPROXY_DOMAIN
         auto_sso = config.AUTO_SSO_LOGIN_DEFAULT if self.valves.AUTO_SSO_LOGIN is None else self.valves.AUTO_SSO_LOGIN
+        clear_articles_dir = config.CLEAR_ARTICLES_DIR if self.valves.CLEAR_ARTICLES_DIR is None else self.valves.CLEAR_ARTICLES_DIR
 
         # Synchronize LLM configuration from OpenWebUI Valves
         llm_model = (self.valves.MODEL_NAME or config.MODEL_NAME).strip()
@@ -307,6 +312,7 @@ class Pipeline:
                     orchestrator_prompt=self.valves.ORCHESTRATOR_PROMPT or ORCHESTRATOR_SYSTEM_PROMPT,
                     save_output_file=True,
                     auto_sso_login=auto_sso,
+                    clear_articles_dir=clear_articles_dir,
                     status_callback=cb,
                     telemetry=pipe_tm,
                 )

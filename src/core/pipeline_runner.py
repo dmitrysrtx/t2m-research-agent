@@ -214,6 +214,7 @@ def execute_t2m_research(
     orchestrator_prompt: str = None,
     save_output_file: bool = True,
     auto_sso_login: bool = config.AUTO_SSO_LOGIN_DEFAULT,
+    clear_articles_dir: bool = config.CLEAR_ARTICLES_DIR,
     status_callback: callable = None,
     output_filename: str = config.DEFAULT_OUTPUT_FILE,
     telemetry: Optional[TelemetryManager] = None,
@@ -334,9 +335,15 @@ def execute_t2m_research(
     tm.tool_call("fetch_papers", args=f"Domains: {list(domains.keys())}", source="fetcher")
 
     kinematic_candidates = fetch_candidates_for_domain("kinematic")
-    physics_candidates = fetch_candidates_for_domain("physics")
+    physics_candidates = fetch_candidates_for_domain("physics")  
     rl_candidates = fetch_candidates_for_domain("rl")
     pose_candidates = fetch_candidates_for_domain("pose")
+
+    logger.info(f"[*] Candidate papers fetched per domain:")
+    logger.info(f"    Kinematic: {len(kinematic_candidates)} candidates")
+    logger.info(f"    Physics: {len(physics_candidates)} candidates")  
+    logger.info(f"    RL: {len(rl_candidates)} candidates")
+    logger.info(f"    Pose: {len(pose_candidates)} candidates")
 
     total_candidates_pool = (
         len(kinematic_candidates) + len(physics_candidates) + len(rl_candidates) + len(pose_candidates)
@@ -345,6 +352,15 @@ def execute_t2m_research(
 
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     articles_dir = os.path.join(project_root, "articles")
+    
+    # Optionally clear articles directory if configured
+    if getattr(config, "CLEAR_ARTICLES_DIR", False):
+        import shutil
+        if os.path.exists(articles_dir):
+            shutil.rmtree(articles_dir)
+            logger.info(f"Cleared existing articles directory: {articles_dir}")
+    
+    os.makedirs(articles_dir, exist_ok=True)
 
     # 2. DOWNLOAD PDFs WITH CANDIDATE REPLENISHMENT
     _notify("[2/4] Downloading full-text PDFs with candidate replenishment...")
@@ -398,6 +414,8 @@ def execute_t2m_research(
                 seen_sec_keys.add(pkey)
                 unique_secured.append(p)
 
+    logger.info(f"[*] After deduplication: {len(unique_secured)} unique secured papers")
+
     # Deduplicate unsecured papers
     unique_unsecured = []
     seen_unsec_keys = set(seen_sec_keys)
@@ -409,6 +427,7 @@ def execute_t2m_research(
 
     total_candidates = len(unique_secured) + len(unique_unsecured)
     download_count = len(unique_secured)
+    logger.info(f"[*] Final counts - Secured: {download_count}, Unsecured: {len(unique_unsecured)}, Total: {total_candidates}")
     tm.tool_result(
         "download_pdfs",
         result=f"Secured {download_count} full-text PDFs (Replenished from {total_candidates} candidates)",

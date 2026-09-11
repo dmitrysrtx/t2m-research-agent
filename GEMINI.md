@@ -66,7 +66,25 @@ t2m-research-agent/
 
 ## Architectural Decision Log
 
+### 2026-09-09: Unified Peer-Review Status in `citation_enricher.py`
+- **Goal**: Eliminate inconsistent `Peer-Review Status` column values in the generated ACADEMIC CREDIBILITY table — specifically, CORE rank strings (`"CORE A* (Tier 1, H5: 285)"`, `"Top Robotics (Tier 1, H5: 65)"`) appearing in the Status column instead of uniform peer-review labels.
+- **Root Causes & Key Changes**:
+  1. **BUG: Fallback branch used `v_eval["impact_factor"]` as status** (`citation_enricher.py` line 129):
+     - `evaluate_venue()` returns `impact_factor` = CORE/JCR rank string (e.g. `"CORE A* (Tier 1, H5: 285)"`).
+     - This was directly placed in the `status` field, polluting the Peer-Review Status column with ranking metadata.
+     - **Fix**: Derive status from `v_eval["is_peer_reviewed"]` boolean → `"Peer-Reviewed"` or `"Preprint (arXiv)"`.
+  2. **BUG: Non-canonical status strings in multiple branches**:
+     - Lines 82, 122: `"ArXiv Preprint"` / `"Peer-Reviewed Journal/Conf"` → normalized to `"Preprint (arXiv)"` / `"Peer-Reviewed"`.
+     - Line 104: `"Peer-Reviewed (Journal Ref)"` → normalized to `"Peer-Reviewed"`.
+  3. **BUG: Counter predicate mismatch** (line 155):
+     - `"Preprint" in meta["status"]` matched interior substrings, not a prefix check.
+     - **Fix**: `meta["status"].startswith("Preprint")` — canonical, future-proof.
+  4. **Canonical Status Vocabulary** (two values only):
+     - `"Peer-Reviewed"` — CrossRef DOI / CrossRef search / ArXiv journal_ref / venue_ranker peer-reviewed venues.
+     - `"Preprint (arXiv)"` — ArXiv URL path, `is_peer_reviewed=False` from venue_ranker.
+
 ### 2026-09-09: Langfuse SDK v4 Compatibility Fix & Telemetry Activation (`langfuse_sink.py`, `pipeline_config.yaml`)
+
 - **Goal**: Fix silent telemetry failure — traces not reaching Langfuse despite correct credentials and reachable server.
 - **Root Causes & Key Changes**:
   1. **BUG #1 — YAML Key Path Mismatch (`pipeline_config.yaml`)**:

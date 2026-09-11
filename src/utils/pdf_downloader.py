@@ -199,6 +199,9 @@ def download_pdfs(papers_list: List[Dict[str, Any]], output_dir: str = "articles
 
     session = session or get_authenticated_session(cookie_override=cookie_override)
     downloaded_count, failed_papers = 0, []
+    
+    # Log the number of papers we're attempting to download
+    logger.info(f"\n[*] Attempting to download {len(papers_list)} candidate papers to '{output_dir}/'")
 
     for p in papers_list:
         title = p.get('title', 'Unknown_Paper')
@@ -280,6 +283,8 @@ def download_pdfs(papers_list: List[Dict[str, Any]], output_dir: str = "articles
             failed_papers.append(title)
 
     logger.info(f"\n[*] Successfully secured {downloaded_count} PDFs inside '{output_dir}/'.")
+    if failed_papers:
+        logger.info(f"[*] Failed to secure {len(failed_papers)} papers.")
     return downloaded_count
 
 

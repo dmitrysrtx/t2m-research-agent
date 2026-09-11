@@ -24,7 +24,7 @@ def main():
     )
     
     if "🛑" in result:
-        print(result)
+        print(result)   
         return
 if __name__ == "__main__":
     main()

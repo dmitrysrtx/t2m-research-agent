@@ -2,6 +2,9 @@
 venv/
 env/
 .venv/
+.roo/
+.clinerules
+.clineignore
 
 # Python Cache
 __pycache__/
@@ -11,13 +14,13 @@ __pycache__/
 
 # Environment Variables (DO NOT COMMIT!)
 .env
+ezproxy_cookies.json
 
 # Output files & Directories
 LITERATURE_REVIEW.md
 articles/
 *.log
-proposal_en.md
-proposal_ru.md
+
 
 # Browser Profile & Authentication State
 src/auth/.browser_profile/

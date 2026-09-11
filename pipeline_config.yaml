@@ -55,7 +55,7 @@ llm:
 
   # Maximum Token Budget per Sub-Agent Domain Table
   # Recommended: 4096 tokens (sufficient for detailed ~5-paper extraction tables).
-  subagent_max_tokens: 4096
+  subagent_max_tokens: 8192
 
   # Maximum Token Budget for Master Literature Review Chapter
   # Recommended: 8192 tokens (produces an exhaustive 4,000+ word publication-ready thesis review).
@@ -74,7 +74,7 @@ search_discovery:
   # Target number of papers to select per sub-agent domain
   # Formula: (4 domains * max_results_per_domain) = Total Verified Papers Ingested.
   # Example: 5 per domain = 20 core papers analyzed in the final report.
-  max_results_per_domain: 5
+  max_results_per_domain: 10
 
   # Primary Search Engine (Semantic Scholar Graph API)
   # Recommended: true. Single Source of Truth indexing arXiv, IEEE, ACM, Springer, Nature.
@@ -176,7 +176,7 @@ code_artifacts:
 pdf_ingestion:
   # Exact number of verified full-text PDFs required to reach Sub-Agents
   # Guarantees that Sub-Agents analyze 100% full-text documents with zero speculation.
-  target_pdf_count: 20
+  target_pdf_count: 40
 
   # Candidate Pool Multiplier [1.2 - 2.0]
   # Fetches (target_pdf_count * candidate_pool_multiplier) candidate papers (e.g. 20 * 1.5 = 30).

@@ -62,6 +62,7 @@ IEEE_INSTITUTION_DEFAULT = cfg.get("pdf_ingestion.ieee_institution", "afeka")
 UNPAYWALL_EMAIL = cfg.get("pdf_ingestion.unpaywall_email", "academic_bot@afeka.ac.il")
 PDF_DOWNLOAD_TIMEOUT = int(cfg.get("pdf_ingestion.download_timeout", 25))
 PDF_MAX_SIZE_MB = int(cfg.get("pdf_ingestion.max_file_size_mb", 50))
+CLEAR_ARTICLES_DIR = bool(cfg.get("pdf_ingestion.clear_articles_dir", False))
 
 # ==============================================================================
 # 6. Telemetry, Storage & Observability

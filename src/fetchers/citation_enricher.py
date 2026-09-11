@@ -79,7 +79,7 @@ def query_academic_metadata(url: str, title: str, existing_meta: dict = None) ->
                 year = _extract_crossref_year(item) or fallback_year or "N/A"
                 cites = int(item.get("is-referenced-by-count", fallback_cites))
                 is_ax = any(p in venue.lower() for p in ["arxiv", "biorxiv"])
-                return {"venue": venue, "year": year, "citations": cites, "status": "ArXiv Preprint" if is_ax else "Peer-Reviewed Journal/Conf"}
+                return {"venue": venue, "year": year, "citations": cites, "status": "Preprint (arXiv)" if is_ax else "Peer-Reviewed"}
         except Exception as e:
             logger.debug(f"[citation_enricher] CrossRef DOI query error: {e}")
 
@@ -101,7 +101,7 @@ def query_academic_metadata(url: str, title: str, existing_meta: dict = None) ->
                     if ax_doi is not None and ax_doi.text:
                         return query_academic_metadata(url, title, {"doi": ax_doi.text.strip(), "year": arxiv_year})
                     if ax_jref is not None and ax_jref.text:
-                        return {"venue": ax_jref.text.strip(), "year": arxiv_year or fallback_year or "N/A", "citations": fallback_cites, "status": "Peer-Reviewed (Journal Ref)"}
+                        return {"venue": ax_jref.text.strip(), "year": arxiv_year or fallback_year or "N/A", "citations": fallback_cites, "status": "Peer-Reviewed"}
         except Exception:
             pass
         return {"venue": "arXiv", "year": arxiv_year or fallback_year or "N/A", "citations": fallback_cites, "status": "Preprint (arXiv)"}
@@ -119,14 +119,16 @@ def query_academic_metadata(url: str, title: str, existing_meta: dict = None) ->
                     year = _extract_crossref_year(item) or fallback_year or "N/A"
                     cites = int(item.get("is-referenced-by-count", fallback_cites))
                     is_ax = any(p in venue.lower() for p in ["arxiv", "biorxiv"])
-                    return {"venue": venue, "year": year, "citations": cites, "status": "ArXiv Preprint" if is_ax else "Peer-Reviewed Journal/Conf"}
+                    return {"venue": venue, "year": year, "citations": cites, "status": "Preprint (arXiv)" if is_ax else "Peer-Reviewed"}
     except Exception as e:
         logger.debug(f"[citation_enricher] CrossRef search error: {e}")
 
     # 4. Resilient Fallback with Deterministic Venue Ranker
     final_venue = fallback_venue if (fallback_venue and fallback_venue not in {"Peer-Reviewed Journal", "Unknown"}) else "Academic Publication"
     v_eval = evaluate_venue(final_venue, url)
-    return {"venue": v_eval["venue_name"], "year": fallback_year or "N/A", "citations": fallback_cites, "status": v_eval["impact_factor"]}
+    # Use is_peer_reviewed flag — never dump CORE rank strings into the Status column
+    fallback_status = "Preprint (arXiv)" if not v_eval.get("is_peer_reviewed", True) else "Peer-Reviewed"
+    return {"venue": v_eval["venue_name"], "year": fallback_year or "N/A", "citations": fallback_cites, "status": fallback_status}
 
 
 def extract_papers_from_markdown(content: str) -> list:
@@ -152,7 +154,8 @@ def generate_credibility_table(papers: list) -> str:
         url, display = paper.get("url", ""), paper.get("display_title") or title
         logger.info(f"[{i+1}/{len(papers)}] Enriching citations for: '{title[:40]}...'")
         meta = query_academic_metadata(url, title, existing_meta=paper)
-        if "Preprint" in meta["status"]:
+        # Canonical preprint status: "Preprint (arXiv)" — all other statuses are peer-reviewed
+        if meta["status"].startswith("Preprint"):
             preprints += 1
         else:
             peer_rev += 1

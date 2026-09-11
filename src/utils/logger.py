@@ -18,13 +18,20 @@ def setup_logger(log_file=DEFAULT_LOG_PATH):
         # Formatter for the log messages
         formatter = logging.Formatter('%(asctime)s | %(levelname)-7s | %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
         
-        # File Handler (append mode with graceful error handling)
+        # Console Handler
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setFormatter(formatter)
+        logger.addHandler(console_handler)
+        
+        # File Handler (append mode with proper error handling)
         try:
+            # Ensure the directory exists
+            os.makedirs(os.path.dirname(log_file), exist_ok=True)
             file_handler = logging.FileHandler(log_file, mode='a', encoding='utf-8')
             file_handler.setFormatter(formatter)
             logger.addHandler(file_handler)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to create log file {log_file}: {e}")
             
     return logger
 
