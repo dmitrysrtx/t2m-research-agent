@@ -53,7 +53,9 @@ GITHUB_READ_TIMEOUT = float(cfg.get("code_artifacts.github_read_timeout", 3.0))
 # ==============================================================================
 # 5. PDF Acquisition & Ingestion Cascade
 # ==============================================================================
-TARGET_PDF_COUNT = int(cfg.get("pdf_ingestion.target_pdf_count", 20))
+SUB_AGENTS = cfg.get_sub_agents()
+NUM_DOMAINS = len(SUB_AGENTS) if SUB_AGENTS else 4
+TARGET_PDF_COUNT = int(cfg.get("pdf_ingestion.target_pdf_count", NUM_DOMAINS * MAX_RESULTS_PER_DOMAIN))
 CANDIDATE_POOL_MULTIPLIER = float(cfg.get("pdf_ingestion.candidate_pool_multiplier", 1.5))
 ARTICLES_OUTPUT_DIR = cfg.get("pdf_ingestion.output_dir", "articles")
 EZPROXY_DOMAIN_DEFAULT = cfg.get("pdf_ingestion.ezproxy_domain", "ezproxy.afeka.ac.il")
@@ -82,7 +84,7 @@ if __name__ == "__main__":
     print(f"[*] Base URL: {BASE_URL}")
     print(f"[*] API Key Present: {'Yes' if API_KEY else 'No'}")
     print(f"[*] Search Query Default: {DEFAULT_SEARCH_QUERY}")
-    print(f"[*] Max Results Per Domain: {MAX_RESULTS_PER_DOMAIN}")
+    print(f"[*] Max Results Per Domain: {MAX_RESULTS_PER_DOMAIN} (Target PDFs Total: {TARGET_PDF_COUNT} across {NUM_DOMAINS} domains)")
     print(f"[*] Fetchers -> IEEE: {ENABLE_IEEE_DEFAULT} | Scholar: {ENABLE_SCHOLAR_DEFAULT} | ArXiv: {ENABLE_ARXIV_DEFAULT} | Semantic: {ENABLE_SEMANTIC_SCHOLAR_DEFAULT}")
     print(f"[*] SOTA Ratio: {FRONTIER_BUCKET_RATIO} | Foundational Ratio: {FOUNDATIONAL_BUCKET_RATIO}")
     print(f"[*] Code-First -> Require: {REQUIRE_CODE_DEFAULT} | Prefer: {PREFER_CODE_DEFAULT} (Boost: {CODE_ARTIFACT_SCORE_BOOST})")

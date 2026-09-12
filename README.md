@@ -30,12 +30,10 @@ Includes multi-fetcher academic search across **Google Scholar**, **IEEE Xplore*
    - **Uniform Markdown Link Formatting:** Enforces `[owner/repo](https://github.com/owner/repo)` format across all sub-agent and orchestrator tables via `clean_github_markdown_link()`.
    - **Zero-Tolerance Dead Link Sanitization:** Masks unverified/dead links (404) from LLM prompts and strictly sanitizes Sub-Agent and Orchestrator Markdown tables to ensure dead links never appear in reports.
 
-4. **Multi-Agent RAG Pipeline:**
-   - **AI Sub-Agents:** *Kinematic Models, Physics & Diffusion, RL Character Control, 3D Pose Vision*.
-   - **Master Orchestrator:** Synthesizes sub-agent reports into an academic Literature Review chapter with comparative tables and research gaps.
-
-5. **Open WebUI Pipelines & Valves Integration (`openwebui/`):**
-   - Configurable Valves for enabling/disabling fetchers (`ENABLE_IEEE`, `ENABLE_SCHOLAR`, `ENABLE_ARXIV`, `ENABLE_SEMANTIC_SCHOLAR`), code-first paper selection (`REQUIRE_CODE`, `PREFER_CODE`), adjusting paper counts, and customizing system prompts.
+4. **Dynamic Multi-Agent RAG Pipeline ($1 \dots N$ Domains):**
+   - **Dynamic Data-Driven Sub-Agents:** Configured entirely via the `sub_agents:` list in `pipeline_config.yaml`. Supports any number of specialized academic domains (default: *Kinematic Models, Physics & Diffusion, RL Character Control, 3D Pose Vision*). Automatically scales search queries, candidate pools, and intermediate synthesis sections.
+   - **Strict Fail-Fast Configuration Validation:** Powered by `src/core/config_validator.py`, verifying all required fields (`id`, `name`, `search_queries`, `system_prompt`) on startup and halting execution with descriptive diagnostic errors if any configuration parameter is missing.
+   - **Master Orchestrator:** Dynamically compiles all specialist sub-agent reports into an academic Literature Review chapter with consolidated comparative tables and research gaps.
 
 ---
 
@@ -85,9 +83,11 @@ t2m-research-agent/
 │   │   ├── text_formatters.py    # Markdown GitHub Link Standardizer & Sanitizer
 │   │   └── logger.py             # System Logger (file-only)
 │   └── core/
-│       └── pipeline_runner.py    # Central pipeline execution engine
+│       ├── config_loader.py      # Master YAML configuration provider & profile switcher
+│       ├── config_validator.py   # Strict schema validation & missing parameter diagnostics
+│       └── pipeline_runner.py    # Dynamic multi-domain pipeline execution engine
 ├── openwebui/                    # OPEN WEBUI INTEGRATION LAYER
-│   ├── t2m_pipeline.py           # Open WebUI Custom Pipeline Wrapper with Valves
+│   ├── t2m_pipeline.py           # Open WebUI Custom Pipeline Wrapper (driven by pipeline_config.yaml SSOT)
 │   └── t2m_openwebui_tool.py     # Open WebUI Importable Tool
 ├── LITERATURE_REVIEW.md          # Generated Literature Review & Peer-Review Table
 ├── articles/                     # Downloaded Full-Text PDFs
@@ -123,7 +123,7 @@ All parameters across the 7 pipeline layers are structured into domains with `${
 - **`search_discovery`**: `default_query`, `max_results_per_domain`, engine toggles (`enable_ieee`, `enable_scholar`, `enable_arxiv`, `enable_semantic_scholar`), `fields_of_study`, `min_citations`.
 - **`scoring_ranking`**: `frontier_bucket_ratio`, `foundational_bucket_ratio`, `recent_year_window`, `venue_tier_1_weight`, `venue_tier_2_weight`, `venue_tier_3_weight`, `verified_code_boost`.
 - **`code_artifacts`**: `require_code`, `prefer_code`, `github_max_workers`, socket connect/read timeouts.
-- **`pdf_ingestion`**: `target_pdf_count`, `candidate_pool_multiplier`, `ezproxy_domain`, `auto_sso_login`, `unpaywall_email`, `download_timeout`.
+- **`pdf_ingestion`**: `candidate_pool_multiplier` (target PDF count dynamically derived from `4 * max_results_per_domain`), `ezproxy_domain`, `auto_sso_login`, `unpaywall_email`, `download_timeout`.
 - **`prompts`**: Full multi-line Markdown system prompts for all 4 domain sub-agents and the Master Orchestrator.
 - **`telemetry_output`**: `default_output_file`, `enable_cli_logs`, `langfuse_host`, `langfuse_public_key`, `langfuse_secret_key`.
 
@@ -256,17 +256,9 @@ python3 main.py
 ### Option 2: Open WebUI Integration
 1. Open your **Open WebUI** dashboard.
 2. Select the `T2M Multi-Agent Academic Pipeline` model.
-3. Configure **Valves** (⚙️ settings icon):
-   - `ENABLE_IEEE` (Toggle IEEE Xplore searches)
-   - `ENABLE_ARXIV` (Toggle open preprints)
-   - `ENABLE_SCHOLAR` (Toggle Google Scholar indexing)
-   - `MODEL_NAME` (Configure backend LLM model, e.g. `antigravity/gemini-3.6-flash-medium` or `claude-3.5-sonnet`)
-   - `API_BASE_URL` (Configure OpenAI-compatible LLM endpoint, e.g. `http://172.17.0.1:20128/v1`)
-   - `OPENROUTER_API_KEY` (Configure API key for LLM queries)
-   - `AUTO_SSO_LOGIN` (Auto-trigger mobile push 2FA on phone when cookies expire)
-   - `EZPROXY_COOKIE` (Optional raw cookie override)
-   - `KINEMATIC_PROMPT`, `PHYSICS_PROMPT`, `RL_PROMPT`, `POSE_PROMPT`, `ORCHESTRATOR_PROMPT` (Clean, multi-line structured Markdown prompts with explicit objectives, formatting rules, and column definitions)
-4. Submit your research prompt to generate a complete multi-agent literature review!
+3. **Single Source of Truth (SSOT)**: All pipeline behaviors, LLM configurations, prompt definitions, search toggles, and PDF acquisition policies are managed centrally in `pipeline_config.yaml`.
+4. Background utility tasks (such as OpenWebUI conversation title and tags generation) are automatically intercepted and answered instantly without triggering redundant research pipelines.
+5. Submit your research query directly in the chat to generate a complete multi-agent literature review!
 
 ---
 

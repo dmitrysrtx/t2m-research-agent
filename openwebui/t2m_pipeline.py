@@ -1,15 +1,17 @@
 """
-title: T2M Academic Research Pipeline (Configurable Valves)
+title: T2M Academic Research Pipeline (SSOT YAML Manifest)
 author: Dmitry Strizhak
-version: 2.0.0
+version: 2.1.0
 license: MIT
-description: Multi-agent academic research pipeline with configurable sub-agent prompts and search engine toggles.
+description: Multi-agent academic research pipeline configured exclusively via pipeline_config.yaml.
 """
 
 import os
 import sys
-from typing import List, Union, Generator, Iterator, Optional
-from pydantic import BaseModel, Field
+import queue
+import threading
+from typing import List, Union, Generator, Iterator
+from pydantic import BaseModel
 
 # Ensure agent project directory is in python path
 AGENT_PATHS = [
@@ -21,98 +23,20 @@ for p in AGENT_PATHS:
     if os.path.exists(p) and p not in sys.path:
         sys.path.insert(0, p)
 
-from src.core.pipeline_runner import execute_t2m_research
-from src.agents.sub_agents import (
-    KINEMATIC_SYSTEM_PROMPT,
-    PHYSICS_DIFFUSION_SYSTEM_PROMPT,
-    RL_CONTROL_SYSTEM_PROMPT,
-    MEDIAPIPE_POSE_SYSTEM_PROMPT
-)
-from src.agents.orchestrator import ORCHESTRATOR_SYSTEM_PROMPT
+from src.core.pipeline_runner import execute_t2m_research, extract_core_keywords
 import agent_config as config
+
+_PIPELINE_LOCK = threading.Lock()
+_CURRENT_PIPELINE = {
+    "query": "",
+    "started_at": 0.0,
+}
+
 
 class Pipeline:
     class Valves(BaseModel):
-        ENABLE_IEEE: bool = Field(
-            default=config.ENABLE_IEEE_DEFAULT,
-            description="Enable paper searching via IEEE Xplore (institutional authentication required)"
-        )
-        ENABLE_SCHOLAR: bool = Field(
-            default=config.ENABLE_SCHOLAR_DEFAULT,
-            description="Enable academic paper searching via Google Scholar Index"
-        )
-        ENABLE_ARXIV: bool = Field(
-            default=config.ENABLE_ARXIV_DEFAULT,
-            description="Enable open preprint searching via ArXiv API"
-        )
-        ENABLE_SEMANTIC_SCHOLAR: bool = Field(
-            default=config.ENABLE_SEMANTIC_SCHOLAR_DEFAULT,
-            description="Enable academic paper searching via Semantic Scholar API"
-        )
-        SEMANTIC_SCHOLAR_API_KEY: Optional[str] = Field(
-            default=config.SEMANTIC_SCHOLAR_API_KEY or "",
-            description="Semantic Scholar API Key for high rate limits (https://www.semanticscholar.org/product/api)"
-        )
-        MAX_RESULTS_PER_DOMAIN: int = Field(
-            default=config.MAX_RESULTS_PER_DOMAIN,
-            description="Maximum paper results to retrieve per sub-agent domain"
-        )
-        REQUIRE_CODE: bool = Field(
-            default=config.REQUIRE_CODE_DEFAULT,
-            description="Strictly require verified open-source GitHub code repositories for all selected papers"
-        )
-        PREFER_CODE: bool = Field(
-            default=config.PREFER_CODE_DEFAULT,
-            description="Prefer and prioritize papers with verified open-source GitHub code repositories"
-        )
-        MODEL_NAME: Optional[str] = Field(
-            default=config.MODEL_NAME,
-            description="LLM Model identifier used by sub-agents and orchestrator (e.g. antigravity/gemini-3.6-flash-medium)"
-        )
-        API_BASE_URL: Optional[str] = Field(
-            default=config.BASE_URL,
-            description="OpenAI-compatible API Base URL (e.g. http://172.17.0.1:20128/v1)"
-        )
-        OPENROUTER_API_KEY: Optional[str] = Field(
-            default=config.API_KEY or "",
-            description="API Key for the LLM endpoint"
-        )
-        EZPROXY_COOKIE: Optional[str] = Field(
-            default="",
-            description="Institutional cookie override (e.g. Cookie-Editor JSON or 'ERIGHTS=...'). Leave empty to automatically use managed persistent session from ezproxy_cookies.json."
-        )
-        EZPROXY_DOMAIN: Optional[str] = Field(
-            default=config.EZPROXY_DOMAIN_DEFAULT,
-            description="Institutional EZproxy domain name (e.g., ezproxy.afeka.ac.il)"
-        )
-        AUTO_SSO_LOGIN: bool = Field(
-            default=config.AUTO_SSO_LOGIN_DEFAULT,
-            description="Automatically renew institutional session via persistent profile (silent renewal or mobile push 2FA if re-authentication needed)"
-        )
-        CLEAR_ARTICLES_DIR: bool = Field(
-            default=config.CLEAR_ARTICLES_DIR,
-            description="Clear the articles directory before each run to avoid counting files from previous runs"
-        )
-        KINEMATIC_PROMPT: Optional[str] = Field(
-            default=KINEMATIC_SYSTEM_PROMPT,
-            description="System Prompt for Kinematic Motion Sub-Agent (Markdown supported)"
-        )
-        PHYSICS_PROMPT: Optional[str] = Field(
-            default=PHYSICS_DIFFUSION_SYSTEM_PROMPT,
-            description="System Prompt for Physics & Diffusion Sub-Agent (Markdown supported)"
-        )
-        RL_PROMPT: Optional[str] = Field(
-            default=RL_CONTROL_SYSTEM_PROMPT,
-            description="System Prompt for Reinforcement Learning Control Sub-Agent (Markdown supported)"
-        )
-        POSE_PROMPT: Optional[str] = Field(
-            default=MEDIAPIPE_POSE_SYSTEM_PROMPT,
-            description="System Prompt for 3D Pose & Vision Sub-Agent (Markdown supported)"
-        )
-        ORCHESTRATOR_PROMPT: Optional[str] = Field(
-            default=ORCHESTRATOR_SYSTEM_PROMPT,
-            description="System Prompt for Master Orchestrator Synthesizer (Markdown supported)"
-        )
+        """Zero-configuration Valves: pipeline_config.yaml is the Single Source of Truth."""
+        pass
 
     def __init__(self):
         self.id = "t2m_pipeline"
@@ -120,7 +44,7 @@ class Pipeline:
         self.valves = self.Valves()
 
     async def on_startup(self):
-        print(f"[*] T2M Research Pipeline v2.0 initialized successfully.")
+        print("[*] T2M Research Pipeline v2.1 (SSOT) initialized successfully.")
 
     async def on_shutdown(self):
         print("[*] T2M Research Pipeline shut down.")
@@ -128,11 +52,52 @@ class Pipeline:
     def pipe(
         self, user_message: str, model_id: str, messages: List[dict], body: dict
     ) -> Union[str, Generator, Iterator]:
+        # 🛡️ Fast-path: Intercept ALL OpenWebUI background utility tasks (stream=False / tasks)
+        is_stream = body.get("stream", True) if isinstance(body, dict) else True
+        task = None
+        if isinstance(body, dict):
+            task = body.get("task") or body.get("metadata", {}).get("task")
+
+        msg_content = (user_message or "").lower()
+
+        # Intercept if non-streaming, explicit task, or internal OpenWebUI prompt
+        if not is_stream or task or "### task:" in msg_content:
+            # 1. Title Generation
+            if task == "title_generation" or "title" in msg_content or "summarize" in msg_content:
+                raw_text = user_message.strip()
+                if messages:
+                    for m in messages:
+                        if m.get("role") == "user":
+                            raw_text = m.get("content", "").strip()
+                            break
+                short_title = extract_core_keywords(raw_text)[:45].strip().title()
+                return f"T2M: {short_title}" if short_title else "T2M Academic Research"
+
+            # 2. Tags Generation
+            if task == "tags_generation" or "tag" in msg_content:
+                return '["text-to-motion", "robotics", "physics-rl"]'
+
+            # 3. Follow-up suggestions or query generation
+            if "follow" in msg_content or "suggest" in msg_content or "questions" in msg_content:
+                return (
+                    "1. How do physics-guided diffusion models enforce ground contact constraints?\n"
+                    "2. What are the key benchmark differences between HumanML3D and KIT-ML datasets?\n"
+                    "3. How do RL controllers bridge the gap between kinematic trajectory planning and physical simulation?"
+                )
+
+            return ""
+
+        return self._stream_pipeline(user_message, model_id, messages, body)
+
+    def _stream_pipeline(
+        self, user_message: str, model_id: str, messages: List[dict], body: dict
+    ) -> Generator[str, None, None]:
+
         # 🔄 Dynamic module reload on each execution (Hot-Reloading without Docker restart)
         try:
             import importlib
+            import src.core.config_validator
             import src.core.config_loader
-            import agent_config as config
             import src.auth.ezproxy_auth
             import src.auth.ezproxy_session
             import src.auth.afeka_sso
@@ -151,6 +116,7 @@ class Pipeline:
             import src.agents.orchestrator
             import src.telemetry
 
+            importlib.reload(src.core.config_validator)
             importlib.reload(src.core.config_loader)
             importlib.reload(config)
             importlib.reload(src.auth.ezproxy_auth)
@@ -173,33 +139,30 @@ class Pipeline:
         except Exception as e:
             print(f"[!] Hot reload warning: {e}")
 
-        import queue
-        import threading
-
         query = user_message.strip() if user_message else config.DEFAULT_SEARCH_QUERY
 
         # Explicit /login command handling
         if query.lower() in ["/login", "login", "/auth", "auth"]:
             yield "🔐 **Initiating Afeka SSO Authentication...**\n\n"
-            msg_queue = queue.Queue()
+            auth_queue = queue.Queue()
 
-            def cb(m: str):
-                msg_queue.put(m)
+            def auth_cb(m: str):
+                auth_queue.put(m)
 
             def auth_worker():
                 import src.auth.sso_login
                 ok, msg = src.auth.sso_login.login_afeka_sso(
-                    status_callback=cb,
+                    status_callback=auth_cb,
                     interactive_fallback=False
                 )
-                msg_queue.put(("DONE", ok, msg))
+                auth_queue.put(("DONE", ok, msg))
 
-            t = threading.Thread(target=auth_worker)
-            t.start()
+            t_auth = threading.Thread(target=auth_worker)
+            t_auth.start()
 
-            while t.is_alive() or not msg_queue.empty():
+            while t_auth.is_alive() or not auth_queue.empty():
                 try:
-                    item = msg_queue.get(timeout=0.5)
+                    item = auth_queue.get(timeout=0.5)
                     if isinstance(item, tuple) and item[0] == "DONE":
                         ok, msg = item[1], item[2]
                         if ok:
@@ -213,37 +176,27 @@ class Pipeline:
                     continue
             return
 
-        enable_ieee = config.ENABLE_IEEE_DEFAULT if self.valves.ENABLE_IEEE is None else self.valves.ENABLE_IEEE
-        enable_scholar = config.ENABLE_SCHOLAR_DEFAULT if self.valves.ENABLE_SCHOLAR is None else self.valves.ENABLE_SCHOLAR
-        enable_arxiv = config.ENABLE_ARXIV_DEFAULT if self.valves.ENABLE_ARXIV is None else self.valves.ENABLE_ARXIV
-        enable_semantic_scholar = config.ENABLE_SEMANTIC_SCHOLAR_DEFAULT if self.valves.ENABLE_SEMANTIC_SCHOLAR is None else self.valves.ENABLE_SEMANTIC_SCHOLAR
-        s2_key = (self.valves.SEMANTIC_SCHOLAR_API_KEY or "").strip()
-        if s2_key:
-            os.environ["SEMANTIC_SCHOLAR_API_KEY"] = s2_key
-            config.SEMANTIC_SCHOLAR_API_KEY = s2_key
-        max_results = config.MAX_RESULTS_PER_DOMAIN if not self.valves.MAX_RESULTS_PER_DOMAIN else self.valves.MAX_RESULTS_PER_DOMAIN
-        require_code = config.REQUIRE_CODE_DEFAULT if self.valves.REQUIRE_CODE is None else self.valves.REQUIRE_CODE
-        prefer_code = config.PREFER_CODE_DEFAULT if self.valves.PREFER_CODE is None else self.valves.PREFER_CODE
-        ezproxy_cookie = "" if not self.valves.EZPROXY_COOKIE else self.valves.EZPROXY_COOKIE
-        ezproxy_domain = config.EZPROXY_DOMAIN_DEFAULT if not self.valves.EZPROXY_DOMAIN else self.valves.EZPROXY_DOMAIN
-        auto_sso = config.AUTO_SSO_LOGIN_DEFAULT if self.valves.AUTO_SSO_LOGIN is None else self.valves.AUTO_SSO_LOGIN
-        clear_articles_dir = config.CLEAR_ARTICLES_DIR if self.valves.CLEAR_ARTICLES_DIR is None else self.valves.CLEAR_ARTICLES_DIR
+        import time
 
-        # Synchronize LLM configuration from OpenWebUI Valves
-        llm_model = (self.valves.MODEL_NAME or config.MODEL_NAME).strip()
-        llm_base_url = (self.valves.API_BASE_URL or config.BASE_URL).strip()
-        llm_key = (self.valves.OPENROUTER_API_KEY or config.API_KEY).strip()
+        if not _PIPELINE_LOCK.acquire(blocking=False):
+            active_q = _CURRENT_PIPELINE.get("query") or "Academic Research"
+            st_time = _CURRENT_PIPELINE.get("started_at", 0.0)
+            elapsed = int(time.time() - st_time) if st_time else 0
+            mins, secs = elapsed // 60, elapsed % 60
+            elapsed_str = f"{mins}m {secs}s" if mins > 0 else f"{secs}s"
+            yield (
+                f"⚠️ **T2M research pipeline is currently running!**\n\n"
+                f"- **Active Query:** `{active_q}`\n"
+                f"- **Running For:** `{elapsed_str}`\n\n"
+                f"Please wait for the active analysis to complete before starting a new one. "
+                f"You can monitor real-time progress in the original chat session.\n"
+            )
+            return
 
-        if llm_model:
-            config.MODEL_NAME = llm_model
-            os.environ["MODEL_NAME"] = llm_model
-        if llm_base_url:
-            config.BASE_URL = llm_base_url
-            os.environ["API_BASE_URL"] = llm_base_url
-        if llm_key:
-            config.API_KEY = llm_key
-            os.environ["OPENROUTER_API_KEY"] = llm_key
+        _CURRENT_PIPELINE["query"] = query[:60]
+        _CURRENT_PIPELINE["started_at"] = time.time()
 
+        # Synchronize LLM client from pipeline_config.yaml
         src.agents.sub_agents.MODEL_NAME = config.MODEL_NAME
         src.agents.sub_agents.BASE_URL = config.BASE_URL
         src.agents.sub_agents.API_KEY = config.API_KEY
@@ -278,7 +231,7 @@ class Pipeline:
                     err = payload.get("error", "Error")
                     msg_queue.put(f"❌ *[{src_name}]* {err}")
 
-        # Dispatcher with UI adapter, SSE sink, Terminal sink, and Langfuse sink
+        # Decoupled Telemetry Dispatcher
         pipe_tm = src.telemetry.TelemetryManager([OpenWebUIAdapterSink(), sse_sink])
         if getattr(config, "ENABLE_CLI_LOGS", True):
             pipe_tm.register_handler(src.telemetry.TerminalHandler())
@@ -294,46 +247,52 @@ class Pipeline:
 
         def runner_worker():
             try:
+                # All operational parameters are drawn directly from pipeline_config.yaml (SSOT)
                 res = src.core.pipeline_runner.execute_t2m_research(
                     query=query,
-                    enable_ieee=enable_ieee,
-                    enable_scholar=enable_scholar,
-                    enable_arxiv=enable_arxiv,
-                    enable_semantic_scholar=enable_semantic_scholar,
-                    max_results_per_domain=max_results,
-                    require_code=require_code,
-                    prefer_code=prefer_code,
-                    ezproxy_cookie=ezproxy_cookie,
-                    ezproxy_domain=ezproxy_domain,
-                    kinematic_prompt=self.valves.KINEMATIC_PROMPT or KINEMATIC_SYSTEM_PROMPT,
-                    physics_prompt=self.valves.PHYSICS_PROMPT or PHYSICS_DIFFUSION_SYSTEM_PROMPT,
-                    rl_prompt=self.valves.RL_PROMPT or RL_CONTROL_SYSTEM_PROMPT,
-                    pose_prompt=self.valves.POSE_PROMPT or MEDIAPIPE_POSE_SYSTEM_PROMPT,
-                    orchestrator_prompt=self.valves.ORCHESTRATOR_PROMPT or ORCHESTRATOR_SYSTEM_PROMPT,
+                    enable_ieee=config.ENABLE_IEEE_DEFAULT,
+                    enable_scholar=config.ENABLE_SCHOLAR_DEFAULT,
+                    enable_arxiv=config.ENABLE_ARXIV_DEFAULT,
+                    enable_semantic_scholar=config.ENABLE_SEMANTIC_SCHOLAR_DEFAULT,
+                    max_results_per_domain=config.MAX_RESULTS_PER_DOMAIN,
+                    require_code=config.REQUIRE_CODE_DEFAULT,
+                    prefer_code=config.PREFER_CODE_DEFAULT,
+                    ezproxy_cookie=getattr(config, "EZPROXY_COOKIE_OVERRIDE", ""),
+                    ezproxy_domain=config.EZPROXY_DOMAIN_DEFAULT,
                     save_output_file=True,
-                    auto_sso_login=auto_sso,
-                    clear_articles_dir=clear_articles_dir,
+                    auto_sso_login=config.AUTO_SSO_LOGIN_DEFAULT,
+                    clear_articles_dir=config.CLEAR_ARTICLES_DIR,
                     status_callback=cb,
                     telemetry=pipe_tm,
                 )
                 msg_queue.put(("RESULT", res))
+            except src.core.config_validator.ConfigValidationError as cve:
+                msg_queue.put(("ERROR", f"**Configuration Error (pipeline_config.yaml):**\n\n```\n{cve}\n```"))
             except Exception as e:
+                import traceback
+                traceback.print_exc()
                 msg_queue.put(("ERROR", str(e)))
 
         t = threading.Thread(target=runner_worker)
         t.start()
 
-        while t.is_alive() or not msg_queue.empty():
-            try:
-                item = msg_queue.get(timeout=0.5)
-                if isinstance(item, tuple):
-                    if item[0] == "RESULT":
-                        yield f"\n\n{item[1]}"
-                        return
-                    elif item[0] == "ERROR":
-                        yield f"\n\n❌ **Execution Error:** {item[1]}\n"
-                        return
-                else:
-                    yield f"{item}\n"
-            except queue.Empty:
-                continue
+        try:
+            while t.is_alive() or not msg_queue.empty():
+                try:
+                    item = msg_queue.get(timeout=0.5)
+                    if isinstance(item, tuple):
+                        if item[0] == "RESULT":
+                            yield f"\n\n{item[1]}"
+                            return
+                        elif item[0] == "ERROR":
+                            yield f"\n\n❌ **Execution Error:** {item[1]}\n"
+                            return
+                    else:
+                        yield f"{item}\n"
+                except queue.Empty:
+                    continue
+        finally:
+            _CURRENT_PIPELINE["query"] = ""
+            _CURRENT_PIPELINE["started_at"] = 0.0
+            if _PIPELINE_LOCK.locked():
+                _PIPELINE_LOCK.release()

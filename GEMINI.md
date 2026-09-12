@@ -48,7 +48,8 @@ t2m-research-agent/
     ├── core/                   # Layer 4: Configuration & Pipeline Execution Engine
     │   ├── __init__.py         # Core package exports with lazy loading
     │   ├── config_loader.py    # Singleton PipelineConfig, env interpolator & profile switcher
-    │   └── pipeline_runner.py  # High-level pipeline coordinator & review assembler
+    │   ├── config_validator.py # Strict schema validation & missing parameter diagnostics
+    │   └── pipeline_runner.py  # High-level dynamic pipeline coordinator & review assembler
     ├── telemetry/              # Layer 5: Decoupled Telemetry & Event Dispatcher
     │   ├── __init__.py         # Package exports & get_telemetry() factory
     │   ├── events.py           # EventType enum & TelemetryEvent data model
@@ -65,6 +66,93 @@ t2m-research-agent/
 ```
 
 ## Architectural Decision Log
+
+### 2026-09-12: Resolution of `[Errno 2]` Race Condition, OpenWebUI Metadata Task Interception & Mutex Concurrency Lock
+- **Goal**: Resolve fatal `[Errno 2] No such file or directory: 'Motion Guided 3D Pose Estimation from Videos.pdf'` crash during pipeline startup with `clear_articles_dir: true`, intercept OpenWebUI's nested `body["metadata"]["task"]` requests, enforce single-flight pipeline execution via a global mutex (`_PIPELINE_LOCK`), and make directory deletion in `pipeline_runner.py` completely resilient.
+- **Root Causes & Key Changes**:
+  1. **OpenWebUI Nested Task Metadata Structure (`openwebui/t2m_pipeline.py`)**:
+     - OpenWebUI (`/app/backend/open_webui/routers/tasks.py`) dispatches background utility tasks with `'metadata': {'task': str(TASKS.TITLE_GENERATION), ...}` and `'stream': False`, NOT at the top-level `body["task"]`.
+     - In addition, OpenWebUI sends follow-up prompts (`### Task: Suggest 3-5 relevant follow-up questions...`) with `stream: False`. Without catching these, they launched 10-minute research pipelines in the background.
+     - **Fix**: Expanded fast-path interception to check `not is_stream or task or "### task:" in msg_content`. Instant metadata responses (titles, tags, suggested follow-ups) are returned within 1 ms without touching `_stream_pipeline`.
+  2. **Concurrent Execution & `shutil.rmtree` Race Condition (`src/core/pipeline_runner.py`, `openwebui/t2m_pipeline.py`)**:
+     - When the chat completion and title generation ran simultaneously, both called `execute_t2m_research(..., clear_articles_dir=True)`.
+     - Both threads invoked `shutil.rmtree(articles_dir)`. Thread 2 deleted files while Thread 1's `os.unlink` was iterating through the directory, triggering `FileNotFoundError: [Errno 2] No such file or directory: 'Motion Guided 3D Pose Estimation from Videos.pdf'`.
+     - **Fix 1**: Added `shutil.rmtree(articles_dir, ignore_errors=True)` wrapped in `try...except` to prevent unhandled filesystem exceptions on transient or concurrent file removals.
+     - **Fix 2**: Introduced a process-level `_PIPELINE_LOCK = threading.Lock()` in `openwebui/t2m_pipeline.py`. If a research pipeline is already active, subsequent requests yield an informative busy notice displaying the active query and elapsed running time.
+     - **Fix 3**: Explicitly bypassed `_PIPELINE_LOCK` for `/login` commands so authentication never blocks or holds the pipeline mutex.
+     - **Fix 4**: Placed `_PIPELINE_LOCK.acquire()` immediately before research synthesis and guaranteed release via `try...finally:`.
+  3. **Full Exception Traceback Logging (`openwebui/t2m_pipeline.py`)**:
+     - Added `traceback.print_exc()` inside `runner_worker()`'s `except Exception as e:` block to ensure future exceptions are visible in container logs.
+  4. **File Permissions & Host Ownership**:
+     - Maintained `0o666` permissions and `dmitryx:dmitryx` ownership across all modified files.
+
+### 2026-09-12: Elimination of OpenWebUI Valves, YAML SSOT Consolidation, Background Task Interceptor & Articles Cleanup
+- **Goal**: Eliminate the dual source-of-truth problem created by OpenWebUI Valves, establish `pipeline_config.yaml` as the sole Single Source of Truth (SSOT) across both CLI (`main.py`) and OpenWebUI (`openwebui/t2m_pipeline.py`), intercept OpenWebUI utility tasks (`title_generation`, `tags_generation`) to prevent concurrent pipeline execution, fix the `clear_articles_dir` parameter evaluation bug, and clean up orphaned PDF articles.
+- **Root Causes & Key Changes**:
+  1. **OpenWebUI Background Concurrency & Race Condition (`openwebui/t2m_pipeline.py`)**:
+     - When users send chat messages, OpenWebUI issues two concurrent requests: the streaming chat completion (`stream: true`) and an internal utility request (`task: "title_generation"`, `stream: false`).
+     - Without task interception, `t2m_pipeline` launched two parallel 10-minute research pipelines, causing simultaneous Semantic Scholar requests, triggering HTTP 429 rate limits, inducing divergent fallback candidate pools, and downloading overlapping PDFs into `articles/`.
+     - **Fix**: Separated `pipe()` entry point from `_stream_pipeline()`. If `body.get("task") == "title_generation"` (or `tags_generation`), `pipe()` returns an instant string title or tags list within 1 ms without launching the heavy research pipeline.
+  2. **Elimination of OpenWebUI Valves in Favor of YAML SSOT (`openwebui/t2m_pipeline.py`, `valves.json`)**:
+     - OpenWebUI Valves previously duplicated over 20 parameters and cached outdated values in `valves.json`, overriding `pipeline_config.yaml`.
+     - Replaced the verbose `Valves` model with an empty `class Valves(BaseModel): pass` and reset `valves.json` to `{}`.
+     - All settings (LLM models, API keys, search toggles, domain counts, prompts, scoring formulas) are now loaded dynamically and exclusively from `pipeline_config.yaml`.
+  3. **`clear_articles_dir` Parameter Bug Fix (`src/core/pipeline_runner.py`, `pipeline_config.yaml`, `main.py`)**:
+     - `execute_t2m_research` previously checked `if getattr(config, "CLEAR_ARTICLES_DIR", False):` instead of using its own argument `clear_articles_dir: bool`.
+     - Exposed `clear_articles_dir: false` (with documentation for `true`) under `pdf_ingestion:` in `pipeline_config.yaml`.
+     - Fixed `src/core/pipeline_runner.py` to evaluate `if clear_articles_dir:` and enforce `0o777` directory permissions with `dmitryx:dmitryx` host ownership upon directory recreation.
+     - Updated `main.py` CLI runner to explicitly pass `clear_articles_dir=config.CLEAR_ARTICLES_DIR`.
+  4. **Orphaned Articles Pruning (`articles/`)**:
+     - Removed 11 extraneous PDF files deposited by the concurrent title-generation run, restoring the directory count to exactly 61 verified files matching `LITERATURE_REVIEW.md`.
+  5. **Host File Permissions & Ownership**:
+     - Applied `0o666` permissions and `dmitryx:dmitryx` ownership across all modified files.
+
+### 2026-09-11: Dynamic YAML-Driven Sub-Agents ($1 \dots N$) & Strict Schema Validation
+- **Goal**: Transition from fixed hardcoded 4-subagent architecture to a fully dynamic data-driven framework where domain agents are defined entirely within `pipeline_config.yaml`, and enforce strict fail-fast configuration validation on startup to prevent running with missing prompts, empty search queries, or invalid parameters.
+- **Root Causes & Key Changes**:
+  1. **Strict Configuration Validator (`src/core/config_validator.py`)**:
+     - Implemented `validate_pipeline_config()` and `enforce_valid_config()`.
+     - Validates presence, non-emptiness, and unique IDs for all sub-agents.
+     - Enforces that every sub-agent has a non-empty `system_prompt`, `name`, and `search_queries` list.
+     - Validates `orchestrator.system_prompt`, `llm` settings, bucket ratios ($0.95 \le \text{sum} \le 1.05$), and `pdf_ingestion` parameters.
+     - Raises custom `ConfigValidationError` with detailed bulleted error diagnostics pinpointing the exact missing parameter and agent ID.
+  2. **Config Loader & Manifest Evolution (`src/core/config_loader.py`, `pipeline_config.yaml`)**:
+     - Converted Layer 6 in `pipeline_config.yaml` to a clean `sub_agents:` list and `orchestrator:` section.
+     - Integrated validation directly into `cfg.reload()` and `cfg.set_profile()`.
+     - Added `cfg.get_sub_agents() -> List[Dict[str, Any]]`.
+     - Added transparent backward-compatible resolution in `cfg.get("prompts.<id>")` pointing to `sub_agents[id].system_prompt`.
+  3. **Dynamic Derivation (`agent_config.py`)**:
+     - Derived `NUM_DOMAINS = len(SUB_AGENTS) if SUB_AGENTS else 4`.
+     - Dynamically scaled `TARGET_PDF_COUNT = NUM_DOMAINS * MAX_RESULTS_PER_DOMAIN`.
+  4. **Dynamic Execution Loop (`src/core/pipeline_runner.py`)**:
+     - Refactored candidate retrieval, PDF acquisition, sub-agent execution, and intermediate markdown generation to iterate dynamically over `configured_sub_agents`.
+     - Accepted optional `custom_prompts: Dict[str, str]` while preserving backward-compatible named prompt parameters (`kinematic_prompt`, etc.).
+  5. **Generic Domain Agent & Dynamic Orchestration (`sub_agents.py`, `orchestrator.py`)**:
+     - Implemented `analyze_domain()` as the universal LLM runner for any domain agent.
+     - Upgraded `synthesize_literature_review()` to accept dynamic dictionary `sub_agent_results` while maintaining `*args` support for legacy callers.
+  6. **OpenWebUI & CLI Diagnostics (`openwebui/t2m_pipeline.py`, `main.py`)**:
+     - Added `ConfigValidationError` handling to both CLI and OpenWebUI runner worker to present human-readable configuration diagnostics without crashing.
+     - Registered `config_validator` in dynamic hot-reload block.
+  7. **Host Permissions & Ownership**:
+     - Applied `0o666` permissions and `dmitryx:dmitryx` ownership across all created and modified files.
+
+### 2026-09-11: Elimination of Redundant `target_pdf_count` & Dynamic Derivation from Domain Count
+- **Goal**: Eliminate the redundant `target_pdf_count` parameter from `pipeline_config.yaml`, prevent dual source-of-truth discrepancies, dynamically derive total target verified PDFs as `NUM_DOMAINS * MAX_RESULTS_PER_DOMAIN`, and wire `CANDIDATE_POOL_MULTIPLIER` directly into candidate pool allocation.
+- **Root Causes & Key Changes**:
+  1. **Dead & Redundant Parameter Removal (`pipeline_config.yaml`)**:
+     - `target_pdf_count` was exposed under `pdf_ingestion`, but `pipeline_runner.py` drives PDF downloads strictly per-domain using `max_results_per_domain` across 4 sub-agent domains (`kinematic`, `physics`, `rl`, `pose`).
+     - `target_pdf_count` was never read by `pipeline_runner.py`, leading to confusion and out-of-sync configurations.
+     - Removed `target_pdf_count` from `pipeline_config.yaml` and documented automatic derivation ($4 \times \text{max\_results\_per\_domain}$).
+     - Added environment variable interpolation `${MAX_RESULTS_PER_DOMAIN:-10}` to `search_discovery.max_results_per_domain`.
+  2. **Backward-Compatible Dynamic Calculation (`agent_config.py`)**:
+     - Defined `NUM_DOMAINS = 4`.
+     - Calculated `TARGET_PDF_COUNT = int(cfg.get("pdf_ingestion.target_pdf_count", NUM_DOMAINS * MAX_RESULTS_PER_DOMAIN))`.
+     - Automatically adapts when operational profiles (e.g. `thesis_master` with `max_results_per_domain: 15` $\rightarrow$ 60 PDFs) or environment variables override `MAX_RESULTS_PER_DOMAIN`.
+  3. **Candidate Pool Multiplier Connection (`src/core/pipeline_runner.py`)**:
+     - Replaced hardcoded `1.5` multiplier with `getattr(config, "CANDIDATE_POOL_MULTIPLIER", 1.5)` in `fetch_candidates_for_domain`.
+  4. **Documentation Synchronization**:
+     - Updated `PIPELINE_PARAMETERS.md` and `README.md` to reflect derived target PDF counts.
+     - Maintained permissions `0o666` and ownership `dmitryx:dmitryx`.
 
 ### 2026-09-09: Unified Peer-Review Status in `citation_enricher.py`
 - **Goal**: Eliminate inconsistent `Peer-Review Status` column values in the generated ACADEMIC CREDIBILITY table — specifically, CORE rank strings (`"CORE A* (Tier 1, H5: 285)"`, `"Top Robotics (Tier 1, H5: 65)"`) appearing in the Status column instead of uniform peer-review labels.

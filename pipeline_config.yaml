@@ -74,7 +74,7 @@ search_discovery:
   # Target number of papers to select per sub-agent domain
   # Formula: (4 domains * max_results_per_domain) = Total Verified Papers Ingested.
   # Example: 5 per domain = 20 core papers analyzed in the final report.
-  max_results_per_domain: 10
+  max_results_per_domain: 15
 
   # Primary Search Engine (Semantic Scholar Graph API)
   # Recommended: true. Single Source of Truth indexing arXiv, IEEE, ACM, Springer, Nature.
@@ -174,17 +174,21 @@ code_artifacts:
 # legal OpenAccess fallback, and candidate replenishment (Anti-Hallucination).
 # ==============================================================================
 pdf_ingestion:
-  # Exact number of verified full-text PDFs required to reach Sub-Agents
-  # Guarantees that Sub-Agents analyze 100% full-text documents with zero speculation.
-  target_pdf_count: 40
+  # NOTE: Target verified PDF count is dynamically derived as (4 domains * max_results_per_domain).
+  # No need for manual target_pdf_count configuration.
 
   # Candidate Pool Multiplier [1.2 - 2.0]
-  # Fetches (target_pdf_count * candidate_pool_multiplier) candidate papers (e.g. 20 * 1.5 = 30).
+  # Fetches (max_results_per_domain * candidate_pool_multiplier) candidate papers per domain (e.g. 10 * 1.5 = 15).
   # If a paper is paywalled, it is moved to the Appendix and automatically replaced from the pool.
   candidate_pool_multiplier: 1.5
 
   # Directory where binary .pdf files are stored locally
   output_dir: "articles"
+
+  # Wipe existing articles before each new research run (prevents stale file accumulation)
+  # true  -> Deletes all previous PDFs in articles/ before downloading for a fresh run
+  # false -> Preserves downloaded PDFs across runs (acts as a local offline cache)
+  clear_articles_dir: true
 
   # Institutional Access & EZProxy Configuration (Afeka College SSO)
   ezproxy:
@@ -204,93 +208,123 @@ pdf_ingestion:
 
 
 # ==============================================================================
-# 📝 LAYER 6: SUB-AGENT & ORCHESTRATOR SYSTEM PROMPTS
+# 🤖 LAYER 6: DYNAMIC SUB-AGENTS SPECIFICATION & DOMAIN DIRECTIVES
 # ==============================================================================
-# Explicit system prompts enforcing structured table schemas, Markdown link formats,
-# and exhaustive comparative synthesis.
+# Define 1 to N specialist sub-agents. The pipeline dynamically allocates search
+# queries, candidate pools, PDF ingestion quotas, and synthesis blocks per agent.
+#
+# VALIDATION RULES:
+# - Each sub-agent MUST contain: id, name, search_queries (list), system_prompt.
+# - If any parameter or prompt is missing or empty, execution halts immediately.
 # ==============================================================================
-prompts:
+sub_agents:
   # ----------------------------------------------------------------------------
   # Sub-Agent 1: Kinematic Text-to-Motion Models
   # ----------------------------------------------------------------------------
-  kinematic: |
-    You are a specialized AI Research Agent analyzing Kinematic Text-to-Motion architectures.
+  - id: "kinematic"
+    name: "Kinematic Text-to-Motion Models"
+    search_queries:
+      - "text to motion kinematics"
+      - "kinematic human motion generation"
+      - "SMPL motion synthesis"
+    system_prompt: |
+      You are a specialized AI Research Agent analyzing Kinematic Text-to-Motion architectures.
 
-    ### OBJECTIVE:
-    Extract core technical information from the provided paper abstracts and output a structured Markdown table.
+      ### OBJECTIVE:
+      Extract core technical information from the provided paper abstracts and output a structured Markdown table.
 
-    ### FORMATTING RULES:
-    1. Paper Title & Year: Must be a Markdown link: `[Title (Year)](URL)`
-    2. GitHub Code Repo: Strictly `[owner/repo](https://github.com/owner/repo)` if verified in input, else `N/A`. Never output raw unformatted URLs.
-    3. Do not omit or summarize papers. Every paper in the prompt must be represented as a row in the table.
+      ### FORMATTING RULES:
+      1. Paper Title & Year: Must be a Markdown link: `[Title (Year)](URL)`
+      2. GitHub Code Repo: Strictly `[owner/repo](https://github.com/owner/repo)` if verified in input, else `N/A`. Never output raw unformatted URLs.
+      3. Do not omit or summarize papers. Every paper in the prompt must be represented as a row in the table.
 
-    ### TABLE COLUMNS:
-    | Paper Title & Year | Citations | Impact Factor | Code Repository (GitHub) | Architecture (Diffusion/GPT) | Pose Skeleton Used | Key Metrics (FID, etc.) | Limitations |
+      ### TABLE COLUMNS:
+      | Paper Title & Year | Citations | Impact Factor | Code Repository (GitHub) | Architecture (Diffusion/GPT) | Pose Skeleton Used | Key Metrics (FID, etc.) | Limitations |
 
   # ----------------------------------------------------------------------------
   # Sub-Agent 2: Physics-Guided Generative Motion Models
   # ----------------------------------------------------------------------------
-  physics: |
-    You are an expert in Physics-Guided Generative Human Motion Models.
+  - id: "physics"
+    name: "Physics-Guided Generative Motion Models"
+    search_queries:
+      - "physics guided motion diffusion"
+      - "physics contact motion generation"
+      - "foot sliding mitigation motion"
+    system_prompt: |
+      You are an expert in Physics-Guided Generative Human Motion Models.
 
-    ### OBJECTIVE:
-    Extract dynamic and physical constraints from the provided paper abstracts and output a structured Markdown table.
+      ### OBJECTIVE:
+      Extract dynamic and physical constraints from the provided paper abstracts and output a structured Markdown table.
 
-    ### FORMATTING RULES:
-    1. Paper Title & Year: Must be a Markdown link: `[Title (Year)](URL)`
-    2. GitHub Code Repo: Strictly `[owner/repo](https://github.com/owner/repo)` if verified in input, else `N/A`. Never output raw unformatted URLs.
-    3. Highlight explicit physical equations, friction cones, and ground contact solvers.
-    4. Do not omit or summarize papers. Every paper in the prompt must be represented as a row in the table.
+      ### FORMATTING RULES:
+      1. Paper Title & Year: Must be a Markdown link: `[Title (Year)](URL)`
+      2. GitHub Code Repo: Strictly `[owner/repo](https://github.com/owner/repo)` if verified in input, else `N/A`. Never output raw unformatted URLs.
+      3. Highlight explicit physical equations, friction cones, and ground contact solvers.
+      4. Do not omit or summarize papers. Every paper in the prompt must be represented as a row in the table.
 
-    ### TABLE COLUMNS:
-    | Paper Title & Year | Citations | Impact Factor | Code Repository (GitHub) | Physics Integration Method | Physics Engine (MuJoCo/Isaac) | Physical Metrics | Limitations |
+      ### TABLE COLUMNS:
+      | Paper Title & Year | Citations | Impact Factor | Code Repository (GitHub) | Physics Integration Method | Physics Engine (MuJoCo/Isaac) | Physical Metrics | Limitations |
 
   # ----------------------------------------------------------------------------
   # Sub-Agent 3: Reinforcement Learning Physics Character Control
   # ----------------------------------------------------------------------------
-  rl: |
-    You are an expert specializing in Reinforcement Learning for physics-based character control.
+  - id: "rl"
+    name: "Reinforcement Learning Physics Character Control"
+    search_queries:
+      - "reinforcement learning motion control"
+      - "reinforcement learning humanoid control"
+      - "physics character control RL"
+    system_prompt: |
+      You are an expert specializing in Reinforcement Learning for physics-based character control.
 
-    ### OBJECTIVE:
-    Analyze torque-driven policies, reward functions, and simulation setups, outputting a structured Markdown table.
+      ### OBJECTIVE:
+      Analyze torque-driven policies, reward functions, and simulation setups, outputting a structured Markdown table.
 
-    ### FORMATTING RULES:
-    1. Paper Title & Year: Must be a Markdown link: `[Title (Year)](URL)`
-    2. GitHub Code Repo: Strictly `[owner/repo](https://github.com/owner/repo)` if verified in input, else `N/A`. Never output raw unformatted URLs.
-    3. Do not omit or summarize papers. Every paper in the prompt must be represented as a row in the table.
+      ### FORMATTING RULES:
+      1. Paper Title & Year: Must be a Markdown link: `[Title (Year)](URL)`
+      2. GitHub Code Repo: Strictly `[owner/repo](https://github.com/owner/repo)` if verified in input, else `N/A`. Never output raw unformatted URLs.
+      3. Do not omit or summarize papers. Every paper in the prompt must be represented as a row in the table.
 
-    ### TABLE COLUMNS:
-    | Paper Title & Year | Citations | Impact Factor | Code Repository (GitHub) | RL Algorithm (PPO, etc.) | Reward Function Components | Simulation Environment | Limitations |
+      ### TABLE COLUMNS:
+      | Paper Title & Year | Citations | Impact Factor | Code Repository (GitHub) | RL Algorithm (PPO, etc.) | Reward Function Components | Simulation Environment | Limitations |
 
   # ----------------------------------------------------------------------------
   # Sub-Agent 4: 3D Pose Estimation & Computer Vision Bridging
   # ----------------------------------------------------------------------------
-  pose: |
-    You are an expert in Computer Vision, 3D Pose Estimation, and Vision-to-Pose Bridging.
+  - id: "pose"
+    name: "3D Pose Estimation & Computer Vision Bridging"
+    search_queries:
+      - "3d human pose estimation SMPL"
+      - "monocular pose estimation human"
+      - "MediaPipe 3d pose motion"
+    system_prompt: |
+      You are an expert in Computer Vision, 3D Pose Estimation, and Vision-to-Pose Bridging.
 
-    ### OBJECTIVE:
-    Extract vision pipeline specifications, sensor configurations, and keypoint tracking methods into a structured Markdown table.
+      ### OBJECTIVE:
+      Extract vision pipeline specifications, sensor configurations, and keypoint tracking methods into a structured Markdown table.
 
-    ### FORMATTING RULES:
-    1. Paper Title & Year: Must be a Markdown link: `[Title (Year)](URL)`
-    2. GitHub Code Repo: Strictly `[owner/repo](https://github.com/owner/repo)` if verified in input, else `N/A`. Never output raw unformatted URLs.
-    3. Do not omit or summarize papers. Every paper in the prompt must be represented as a row in the table.
+      ### FORMATTING RULES:
+      1. Paper Title & Year: Must be a Markdown link: `[Title (Year)](URL)`
+      2. GitHub Code Repo: Strictly `[owner/repo](https://github.com/owner/repo)` if verified in input, else `N/A`. Never output raw unformatted URLs.
+      3. Do not omit or summarize papers. Every paper in the prompt must be represented as a row in the table.
 
-    ### TABLE COLUMNS:
-    | Paper Title & Year | Citations | Impact Factor | Code Repository (GitHub) | Pose Representation (MediaPipe/SMPL) | Translation Mechanism | Robustness to Noise | Limitations |
+      ### TABLE COLUMNS:
+      | Paper Title & Year | Citations | Impact Factor | Code Repository (GitHub) | Pose Representation (MediaPipe/SMPL) | Translation Mechanism | Robustness to Noise | Limitations |
 
-  # ----------------------------------------------------------------------------
-  # Master Orchestrator Synthesizer: Thesis Chapter Builder
-  # ----------------------------------------------------------------------------
-  orchestrator: |
+# ------------------------------------------------------------------------------
+# Master Orchestrator Synthesizer: Thesis Chapter Builder
+# ------------------------------------------------------------------------------
+orchestrator:
+  name: "Master Literature Synthesis Orchestrator"
+  system_prompt: |
     You are the Chief Academic Editor and Master Synthesizer for an AI Master's degree thesis.
 
     ### OBJECTIVE:
-    Synthesize 4 structured domain reports on "Text-to-Motion and Physics RL" into a comprehensive, publication-ready academic Literature Review Chapter.
+    Synthesize structured domain reports on "Text-to-Motion and Physics RL" into a comprehensive, publication-ready academic Literature Review Chapter.
 
     ### REQUIRED SECTIONS:
     1. Executive Summary
-    2. Analysis of Existing Approaches (Synthesize trends across the 4 sub-agent domains)
+    2. Analysis of Existing Approaches (Synthesize trends across all specialist sub-agent domains)
     3. Consolidated Comparative Table:
        - Preserves columns: | Paper Title & Year | Citations | Impact Factor | Code Repository (GitHub) | Method/Architecture | Key Metrics | Limitations |
     4. Mathematical Foundations (Detail explicit multibody equations, torque control, contacts, and loss formulations)

@@ -77,6 +77,9 @@ class PipelineConfig:
 
         self._active_profile = self._raw_data.get("active_profile", "default")
         self._apply_profile(self._active_profile)
+        if self._data:
+            from src.core.config_validator import enforce_valid_config
+            enforce_valid_config(self._data)
 
     def _apply_profile(self, profile_name: str) -> None:
         """Applies configuration overrides from selected profile."""
@@ -98,6 +101,9 @@ class PipelineConfig:
         if profile_name != "default" and profile_name not in profiles:
             return False
         self._apply_profile(profile_name)
+        if self._data:
+            from src.core.config_validator import enforce_valid_config
+            enforce_valid_config(self._data)
         return True
 
     def get_profile(self) -> str:
@@ -108,6 +114,10 @@ class PipelineConfig:
         """Returns list of available profile names."""
         return list(self._raw_data.get("profiles", {}).keys())
 
+    def get_sub_agents(self) -> List[Dict[str, Any]]:
+        """Returns list of active sub-agents configured in manifest."""
+        return copy.deepcopy(self._data.get("sub_agents", []))
+
     def get(self, path: str, default: Any = None) -> Any:
         """Accesses nested configuration parameter using dot-notation (e.g. 'llm.model_name')."""
         keys = path.split(".")
@@ -116,6 +126,16 @@ class PipelineConfig:
             if isinstance(val, dict) and k in val:
                 val = val[k]
             else:
+                # Backward-compatible fallback for legacy 'prompts.<id>' paths
+                if path.startswith("prompts."):
+                    domain_id = path.split(".", 1)[1]
+                    if domain_id == "orchestrator":
+                        orch = self._data.get("orchestrator", {})
+                        if isinstance(orch, dict) and orch.get("system_prompt"):
+                            return orch.get("system_prompt")
+                    for ag in self._data.get("sub_agents", []):
+                        if ag.get("id") == domain_id:
+                            return ag.get("system_prompt", default)
                 return default
         return val
 

@@ -22,7 +22,10 @@ from src.auth import (
     verify_live_ieee_access,
     EZProxyManager,
 )
+from src.core.config_loader import cfg
+from src.core.config_validator import ConfigValidationError
 from src.agents.sub_agents import (
+    analyze_domain,
     analyze_kinematic,
     analyze_physics_diffusion,
     analyze_rl_control,
@@ -207,6 +210,7 @@ def execute_t2m_research(
     prefer_code: bool = config.PREFER_CODE_DEFAULT,
     ezproxy_cookie: str = "",
     ezproxy_domain: str = config.EZPROXY_DOMAIN_DEFAULT,
+    custom_prompts: Optional[dict] = None,
     kinematic_prompt: str = None,
     physics_prompt: str = None,
     rl_prompt: str = None,
@@ -241,7 +245,7 @@ def execute_t2m_research(
     )
 
     if ezproxy_cookie and ezproxy_cookie.strip():
-        tm.tool_result("config", "Using explicit EZproxy cookie override provided via Valves", source="auth")
+        tm.tool_result("config", "Using explicit EZproxy cookie override", source="auth")
 
     manager = EZProxyManager(cookie_override=ezproxy_cookie)
 
@@ -263,38 +267,33 @@ def execute_t2m_research(
     elif enable_scholar or enable_semantic_scholar:
         prompt_auth_instructions_if_needed()
 
-    # Precise domain search terms (short queries first)
-    domains = {
-        "kinematic": [
-            "text to motion kinematics",
-            "kinematic human motion generation",
-            "SMPL motion synthesis"
-        ],
-        "physics": [
-            "physics guided motion diffusion",
-            "physics contact motion generation",
-            "foot sliding mitigation motion"
-        ],
-        "rl": [
-            "reinforcement learning motion control",
-            "reinforcement learning humanoid control",
-            "physics character control RL"
-        ],
-        "pose": [
-            "3d human pose estimation SMPL",
-            "monocular pose estimation human",
-            "MediaPipe 3d pose motion"
-        ],
-    }
+    # Synchronize custom prompts (OpenWebUI Valves overrides or programmatic map)
+    active_prompts = dict(custom_prompts or {})
+    if kinematic_prompt: active_prompts["kinematic"] = kinematic_prompt
+    if physics_prompt: active_prompts["physics"] = physics_prompt
+    if rl_prompt: active_prompts["rl"] = rl_prompt
+    if pose_prompt: active_prompts["pose"] = pose_prompt
+
+    # Load dynamic sub-agents from configuration
+    configured_sub_agents = cfg.get_sub_agents()
+    if not configured_sub_agents:
+        logger.warning("No sub-agents configured in YAML, falling back to default 4 domains.")
+        configured_sub_agents = [
+            {"id": "kinematic", "name": "Kinematic Text-to-Motion Models", "search_queries": ["text to motion kinematics", "kinematic human motion generation", "SMPL motion synthesis"]},
+            {"id": "physics", "name": "Physics-Guided Generative Motion Models", "search_queries": ["physics guided motion diffusion", "physics contact motion generation", "foot sliding mitigation motion"]},
+            {"id": "rl", "name": "Reinforcement Learning Physics Character Control", "search_queries": ["reinforcement learning motion control", "reinforcement learning humanoid control", "physics character control RL"]},
+            {"id": "pose", "name": "3D Pose Estimation & Computer Vision Bridging", "search_queries": ["3d human pose estimation SMPL", "monocular pose estimation human", "MediaPipe 3d pose motion"]},
+        ]
 
     # 1. FETCH & RANK CANDIDATE PAPERS (CODE-FIRST)
-    def fetch_candidates_for_domain(domain_key: str) -> list:
-        candidate_pool_size = max(int(max_results_per_domain * 1.5), 8)
+    def fetch_candidates_for_domain(domain_key: str, query_terms: list) -> list:
+        pool_multiplier = getattr(config, "CANDIDATE_POOL_MULTIPLIER", 1.5)
+        candidate_pool_size = max(int(max_results_per_domain * pool_multiplier), 8)
         raw_candidates = []
         seen_keys = set()
-        query_terms = domains.get(domain_key, [clean_query])
+        terms = query_terms if query_terms else [clean_query]
 
-        for term in query_terms:
+        for term in terms:
             time.sleep(1.0)
             batch = []
             if enable_ieee:
@@ -332,35 +331,42 @@ def execute_t2m_research(
         )
 
     _notify(f"[1/4] Fetching & ranking candidate papers (Code-First={prefer_code or require_code})...")
-    tm.tool_call("fetch_papers", args=f"Domains: {list(domains.keys())}", source="fetcher")
+    domain_ids = [ag["id"] for ag in configured_sub_agents]
+    tm.tool_call("fetch_papers", args=f"Domains: {domain_ids}", source="fetcher")
 
-    kinematic_candidates = fetch_candidates_for_domain("kinematic")
-    physics_candidates = fetch_candidates_for_domain("physics")  
-    rl_candidates = fetch_candidates_for_domain("rl")
-    pose_candidates = fetch_candidates_for_domain("pose")
+    candidates_by_domain = {}
+    logger.info("[*] Candidate papers fetched per domain:")
+    for ag in configured_sub_agents:
+        aid = ag["id"]
+        aname = ag.get("name", aid)
+        queries = ag.get("search_queries", [clean_query])
+        cand = fetch_candidates_for_domain(aid, queries)
+        candidates_by_domain[aid] = cand
+        logger.info(f"    {aname} ({aid}): {len(cand)} candidates")
 
-    logger.info(f"[*] Candidate papers fetched per domain:")
-    logger.info(f"    Kinematic: {len(kinematic_candidates)} candidates")
-    logger.info(f"    Physics: {len(physics_candidates)} candidates")  
-    logger.info(f"    RL: {len(rl_candidates)} candidates")
-    logger.info(f"    Pose: {len(pose_candidates)} candidates")
-
-    total_candidates_pool = (
-        len(kinematic_candidates) + len(physics_candidates) + len(rl_candidates) + len(pose_candidates)
-    )
-    tm.tool_result("fetch_papers", result=f"Fetched {total_candidates_pool} ranked candidate papers across 4 domains", source="fetcher")
+    total_candidates_pool = sum(len(c) for c in candidates_by_domain.values())
+    tm.tool_result("fetch_papers", result=f"Fetched {total_candidates_pool} ranked candidate papers across {len(configured_sub_agents)} domains", source="fetcher")
 
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     articles_dir = os.path.join(project_root, "articles")
     
     # Optionally clear articles directory if configured
-    if getattr(config, "CLEAR_ARTICLES_DIR", False):
+    if clear_articles_dir:
         import shutil
-        if os.path.exists(articles_dir):
-            shutil.rmtree(articles_dir)
-            logger.info(f"Cleared existing articles directory: {articles_dir}")
+        try:
+            if os.path.exists(articles_dir):
+                shutil.rmtree(articles_dir, ignore_errors=True)
+                logger.info(f"Cleared existing articles directory: {articles_dir}")
+        except Exception as e:
+            logger.warning(f"Could not cleanly clear articles directory: {e}")
     
     os.makedirs(articles_dir, exist_ok=True)
+    try:
+        st = os.stat(project_root)
+        os.chown(articles_dir, st.st_uid, st.st_gid)
+        os.chmod(articles_dir, 0o777)
+    except Exception:
+        pass
 
     # 2. DOWNLOAD PDFs WITH CANDIDATE REPLENISHMENT
     _notify("[2/4] Downloading full-text PDFs with candidate replenishment...")
@@ -370,12 +376,9 @@ def execute_t2m_research(
     unsecured_papers = []
     global_secured_keys = set()
 
-    for domain_name, candidate_list in [
-        ("kinematic", kinematic_candidates),
-        ("physics", physics_candidates),
-        ("rl", rl_candidates),
-        ("pose", pose_candidates)
-    ]:
+    for ag in configured_sub_agents:
+        domain_name = ag["id"]
+        candidate_list = candidates_by_domain.get(domain_name, [])
         domain_secured = []
         for candidate in candidate_list:
             c_key = re.sub(r'[^a-zA-Z0-9]', '', candidate.get('title', '').lower())
@@ -451,35 +454,35 @@ def execute_t2m_research(
     }
 
     # 3. SUB-AGENTS ANALYSIS (Full-Text Secured Only)
-    _notify("[3/4] Engaging AI Expert Sub-Agents on Full-Text Secured Papers...")
-    tm.thinking("Engaging AI Expert Sub-Agents across 4 domains (Full-Text Secured Only)", source="orchestrator")
+    _notify(f"[3/4] Engaging {len(configured_sub_agents)} AI Expert Sub-Agents on Full-Text Secured Papers...")
+    tm.thinking(f"Engaging AI Expert Sub-Agents across {len(configured_sub_agents)} domains (Full-Text Secured Only)", source="orchestrator")
 
-    kinematic_result = sanitize_markdown_table_github_urls(
-        analyze_kinematic(secured_by_domain["kinematic"], custom_prompt=kinematic_prompt, telemetry=tm),
-        verified_gh_urls
-    )
-    physics_result = sanitize_markdown_table_github_urls(
-        analyze_physics_diffusion(secured_by_domain["physics"], custom_prompt=physics_prompt, telemetry=tm),
-        verified_gh_urls
-    )
-    rl_result = sanitize_markdown_table_github_urls(
-        analyze_rl_control(secured_by_domain["rl"], custom_prompt=rl_prompt, telemetry=tm),
-        verified_gh_urls
-    )
-    pose_result = sanitize_markdown_table_github_urls(
-        analyze_pose_vision(secured_by_domain["pose"], custom_prompt=pose_prompt, telemetry=tm),
-        verified_gh_urls
-    )
+    sub_agent_findings = {}
+    for ag in configured_sub_agents:
+        aid = ag["id"]
+        aname = ag.get("name", aid)
+        prompt = active_prompts.get(aid) or ag.get("system_prompt")
+        raw_res = analyze_domain(
+            secured_by_domain.get(aid, []),
+            prompt=prompt,
+            domain_name=aid,
+            telemetry=tm
+        )
+        sub_agent_findings[aid] = {
+            "name": aname,
+            "result": sanitize_markdown_table_github_urls(raw_res, verified_gh_urls)
+        }
 
     # 4. MASTER ORCHESTRATOR SYNTHESIS
     _notify("[4/4] Engaging Master Orchestrator for literature synthesis...")
     tm.thinking("Synthesizing master literature review chapter", source="orchestrator")
+    orch_sub_results = {
+        data["name"]: data["result"]
+        for data in sub_agent_findings.values()
+    }
     final_review = sanitize_markdown_table_github_urls(
         synthesize_literature_review(
-            kinematic_result,
-            physics_result,
-            rl_result,
-            pose_result,
+            sub_agent_results=orch_sub_results,
             custom_prompt=orchestrator_prompt,
             telemetry=tm
         ),
@@ -489,21 +492,23 @@ def execute_t2m_research(
     appendix_section = build_unsecured_appendix(unique_unsecured)
 
     # Build response for Open WebUI & File Saving
+    intermediate_sections = []
+    for idx, (aid, data) in enumerate(sub_agent_findings.items(), start=1):
+        intermediate_sections.append(f"### {idx}. {data['name']} Sub-Agent\n{data['result']}\n\n")
+    intermediate_findings_text = "".join(intermediate_sections)
+
     summary_header = (
         f"# 🎓 T2M Academic Research Report\n\n"
         f"**Query:** `{query[:100]}...` | **Extracted Search Terms:** `{clean_query}`\n"
         f"**Unique Papers Processed:** {total_candidates} | **Full-Text RAG Verified:** {len(unique_secured)} | **Paywalled/Skipped:** {len(unique_unsecured)}\n"
-        f"**Fetchers Active:** "
+        f"**Configured Domains:** {len(configured_sub_agents)} | **Fetchers Active:** "
         f"{'IEEE ' if enable_ieee else ''}"
         f"{'GoogleScholar ' if enable_scholar else ''}"
         f"{'ArXiv ' if enable_arxiv else ''}"
         f"{'SemanticScholar ' if enable_semantic_scholar else ''}\n\n"
         f"---\n\n"
         f"## 🔍 Intermediate Sub-Agent Findings (Tables & Analysis)\n\n"
-        f"### 1. Kinematic Models Sub-Agent\n{kinematic_result}\n\n"
-        f"### 2. Physics & Diffusion Sub-Agent\n{physics_result}\n\n"
-        f"### 3. RL Control Sub-Agent\n{rl_result}\n\n"
-        f"### 4. Pose & Vision Sub-Agent\n{pose_result}\n\n"
+        f"{intermediate_findings_text}"
         f"---\n\n"
         f"# 🏛️ Master Literature Synthesis (Orchestrator)\n\n"
         f"{final_review}\n\n"

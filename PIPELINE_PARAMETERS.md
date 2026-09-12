@@ -80,8 +80,8 @@ This document provides a comprehensive inventory of **every configurable paramet
 
 | Parameter | Environment Variable | Default Value | Type / Range | Description & Impact |
 | :--- | :--- | :--- | :--- | :--- |
-| **Target Verified PDF Count** | `TARGET_PDF_COUNT` | `20` | Integer `[5 - 50]` | Number of verified full-text PDFs required before running sub-agents. |
-| **Candidate Buffer Multiplier** | `CANDIDATE_POOL_MULTIPLIER` | `1.5` | Float `[1.2 - 2.0]` | Fetch $N \times 1.5$ candidates (e.g. 30 papers) to guarantee 20 successful PDF downloads. |
+| **Target Verified PDF Count** | `TARGET_PDF_COUNT` | Derived (`NUM_DOMAINS * MAX_RESULTS_PER_DOMAIN`) | Integer | Automatically computed total target of verified PDFs across all configured sub-agent domains (`NUM_DOMAINS = len(sub_agents)`). |
+| **Candidate Buffer Multiplier** | `CANDIDATE_POOL_MULTIPLIER` | `1.5` | Float `[1.2 - 2.0]` | Fetches `max_results_per_domain * 1.5` candidates per domain (e.g. 15 papers) to guarantee full-text quota. |
 | **Articles Output Folder** | `ARTICLES_OUTPUT_DIR` | `articles/` | Path | Local directory where binary `.pdf` files are stored. |
 | **EZProxy Domain** | `EZPROXY_DOMAIN` | `ezproxy.afeka.ac.il` | String | Institutional proxy host for Afeka College SSO authentication. |
 | **Auto 2FA SSO Login** | `AUTO_SSO_LOGIN` | `True` | Boolean | Automatically maintains/renews institutional session cookies via Playwright. |
@@ -91,15 +91,31 @@ This document provides a comprehensive inventory of **every configurable paramet
 
 ---
 
-## 6. Sub-Agent & Orchestrator Prompts
+## 6. Dynamic Sub-Agents & Strict Validation
 
-| Parameter | Identifier | Default Summary | Role & Specialization |
+Sub-agents are configured dynamically via the `sub_agents:` list in `pipeline_config.yaml`. The framework supports any number of domain agents ($1 \dots N$).
+
+### Sub-Agent Specification Schema
+Each sub-agent entry requires:
+- `id`: Unique string key (e.g. `kinematic`, `physics`, `rl`, `pose`)
+- `name`: Human-readable title (e.g. `Kinematic Text-to-Motion Models`)
+- `search_queries`: Non-empty list of academic query strings
+- `system_prompt`: Multi-line Markdown template specifying role, objective, and table columns
+
+### Fail-Fast Schema Validation (`src/core/config_validator.py`)
+On startup and reload, the validator enforces that:
+- Every sub-agent has all 4 required fields (`id`, `name`, `search_queries`, `system_prompt`).
+- No sub-agent IDs are duplicated.
+- Master `orchestrator.system_prompt` is defined.
+- If any parameter is missing or empty, execution halts immediately with a clear error pinpointing the exact missing parameter.
+
+| Default Sub-Agent | Identifier | Search Queries Count | Role & Specialization |
 | :--- | :--- | :--- | :--- |
-| **Sub-Agent 1 Prompt** | `KINEMATIC_PROMPT` | Kinematic Text-to-Motion | Evaluates VAEs, Transformers, Vector-Quantized models, latent representations. |
-| **Sub-Agent 2 Prompt** | `PHYSICS_PROMPT` | Physics & Diffusion Models | Evaluates physical constraints, contact manifolds, friction cones, loss formulations. |
-| **Sub-Agent 3 Prompt** | `RL_PROMPT` | Reinforcement Learning Control | Evaluates torque-driven policies, tracking rewards, PD control, and MuJoCo/Isaac sim. |
-| **Sub-Agent 4 Prompt** | `POSE_PROMPT` | 3D Pose & Vision Bridging | Evaluates monocular/stereo pose estimation, MediaPipe/SMPL keypoint pipelines. |
-| **Master Orchestrator** | `ORCHESTRATOR_PROMPT` | Academic Synthesis & Thesis Gap | Synthesizes all 4 domains, compares benchmarks, formulates mathematical equations and research gaps. |
+| **Kinematic Models** | `kinematic` | 3 queries | Evaluates VAEs, Transformers, Vector-Quantized models, latent representations. |
+| **Physics & Diffusion** | `physics` | 3 queries | Evaluates physical constraints, contact manifolds, friction cones, loss formulations. |
+| **RL Character Control** | `rl` | 3 queries | Evaluates torque-driven policies, tracking rewards, PD control, and MuJoCo/Isaac sim. |
+| **Pose & Vision** | `pose` | 3 queries | Evaluates monocular/stereo pose estimation, MediaPipe/SMPL keypoint pipelines. |
+| **Master Orchestrator** | `orchestrator` | Synthesizer | Synthesizes all domain reports, compares benchmarks, formulates mathematical equations and thesis research gaps. |
 
 ---
 

@@ -134,25 +134,24 @@ Extract vision pipeline specifications, sensor configurations, and keypoint trac
 
 
 
+def analyze_domain(papers_data, prompt, domain_name="domain", telemetry=None):
+    """Generic analyzer for any dynamically configured domain sub-agent."""
+    if not papers_data:
+        return f"No {domain_name} papers found."
+    agent_tag = f"sub_agent:{domain_name}" if not domain_name.startswith("sub_agent:") else domain_name
+    return run_agent(prompt, format_papers_for_prompt(papers_data), agent_name=agent_tag, telemetry=telemetry)
+
 def analyze_kinematic(papers_data, custom_prompt=None, telemetry=None):
-    if not papers_data: return "No kinematic papers found."
-    prompt = custom_prompt or KINEMATIC_SYSTEM_PROMPT
-    return run_agent(prompt, format_papers_for_prompt(papers_data), agent_name="sub_agent:kinematic", telemetry=telemetry)
+    return analyze_domain(papers_data, custom_prompt or KINEMATIC_SYSTEM_PROMPT, domain_name="kinematic", telemetry=telemetry)
 
 def analyze_physics_diffusion(papers_data, custom_prompt=None, telemetry=None):
-    if not papers_data: return "No physics/diffusion papers found."
-    prompt = custom_prompt or PHYSICS_DIFFUSION_SYSTEM_PROMPT
-    return run_agent(prompt, format_papers_for_prompt(papers_data), agent_name="sub_agent:physics", telemetry=telemetry)
+    return analyze_domain(papers_data, custom_prompt or PHYSICS_DIFFUSION_SYSTEM_PROMPT, domain_name="physics", telemetry=telemetry)
 
 def analyze_rl_control(papers_data, custom_prompt=None, telemetry=None):
-    if not papers_data: return "No RL papers found."
-    prompt = custom_prompt or RL_CONTROL_SYSTEM_PROMPT
-    return run_agent(prompt, format_papers_for_prompt(papers_data), agent_name="sub_agent:rl", telemetry=telemetry)
+    return analyze_domain(papers_data, custom_prompt or RL_CONTROL_SYSTEM_PROMPT, domain_name="rl", telemetry=telemetry)
 
 def analyze_pose_vision(papers_data, custom_prompt=None, telemetry=None):
-    if not papers_data: return "No Pose/Vision papers found."
-    prompt = custom_prompt or MEDIAPIPE_POSE_SYSTEM_PROMPT
-    return run_agent(prompt, format_papers_for_prompt(papers_data), agent_name="sub_agent:pose", telemetry=telemetry)
+    return analyze_domain(papers_data, custom_prompt or MEDIAPIPE_POSE_SYSTEM_PROMPT, domain_name="pose", telemetry=telemetry)
 
 
 

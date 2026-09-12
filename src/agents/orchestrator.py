@@ -8,14 +8,17 @@ from src.core.config_loader import cfg
 # ==========================================
 # 5. MASTER SYNTHESIZER (Orchestrator)
 # ==========================================
-ORCHESTRATOR_SYSTEM_PROMPT = cfg.get("prompts.orchestrator") or """You are the Chief Academic Editor and Master Synthesizer for an AI Master's degree thesis.
+ORCHESTRATOR_SYSTEM_PROMPT = (
+    cfg.get("orchestrator.system_prompt")
+    or cfg.get("prompts.orchestrator")
+    or """You are the Chief Academic Editor and Master Synthesizer for an AI Master's degree thesis.
 
 ### OBJECTIVE:
-Synthesize 4 structured domain reports on "Text-to-Motion and Physics RL" into a comprehensive, publication-ready academic Literature Review Chapter.
+Synthesize structured domain reports on "Text-to-Motion and Physics RL" into a comprehensive, publication-ready academic Literature Review Chapter.
 
 ### REQUIRED SECTIONS:
 1. Executive Summary
-2. Analysis of Existing Approaches (Synthesize trends across the 4 sub-agent domains)
+2. Analysis of Existing Approaches (Synthesize trends across all specialist sub-agent domains)
 3. Consolidated Comparative Table:
    - Preserves columns: | Paper Title & Year | Citations | Impact Factor | Code Repository (GitHub) | Method/Architecture | Key Metrics | Limitations |
    - Format "Paper Title & Year" as `[Title (Year)](URL)`
@@ -25,28 +28,38 @@ Synthesize 4 structured domain reports on "Text-to-Motion and Physics RL" into a
 ### STYLE GUIDELINES:
 - Ensure the text is strictly academic, highly rigorous, and cleanly formatted in Markdown.
 """
+)
 
-def synthesize_literature_review(kinematic_res, physics_diff_res, rl_res, pose_res, custom_prompt=None, telemetry=None):
-    """Passes all sub-agent outputs to the Orchestrator for final compilation."""
-    
-    prompt = f"""
-Here are the analysis results from the 4 domain experts. Please synthesize them into the final Literature Review.
+def synthesize_literature_review(
+    *args,
+    sub_agent_results: dict = None,
+    custom_prompt: str = None,
+    telemetry = None,
+    **kwargs
+):
+    """Passes all sub-agent outputs dynamically to the Orchestrator for final compilation."""
+    results_map = {}
+    if sub_agent_results and isinstance(sub_agent_results, dict):
+        results_map = sub_agent_results
+    elif args:
+        legacy_names = [
+            "Kinematic Text-to-Motion",
+            "Physics-Guided Diffusion",
+            "Reinforcement Learning Control",
+            "Pose Estimation & Vision"
+        ]
+        for idx, arg_val in enumerate(args):
+            title = legacy_names[idx] if idx < len(legacy_names) else f"Domain {idx + 1}"
+            results_map[title] = str(arg_val)
 
----
-1. KINEMATIC TEXT-TO-MOTION:
-{kinematic_res}
+    sections = []
+    for idx, (domain_title, res_text) in enumerate(results_map.items(), start=1):
+        sections.append(f"---\n{idx}. {domain_title.upper()}:\n{res_text}")
 
----
-2. PHYSICS-GUIDED DIFFUSION:
-{physics_diff_res}
+    sub_reports_text = "\n\n".join(sections)
+    prompt = f"""Here are the analysis results from the {len(results_map)} domain experts. Please synthesize them into the final Literature Review.
 
----
-3. REINFORCEMENT LEARNING CONTROL:
-{rl_res}
-
----
-4. POSE ESTIMATION & MEDIAPIPE:
-{pose_res}
+{sub_reports_text}
 ---
 """
     system_prompt = custom_prompt or ORCHESTRATOR_SYSTEM_PROMPT
