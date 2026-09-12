@@ -53,13 +53,16 @@ llm:
   # chapters, and insightful comparative synthesis across the 4 research domains.
   orchestrator_temperature: 0.3
 
-  # Maximum Token Budget per Sub-Agent Domain Table
-  # Recommended: 4096 tokens (sufficient for detailed ~5-paper extraction tables).
-  subagent_max_tokens: 8192
+  # Hierarchical MapReduce Sub-Agent Fanout
+  # Partitions domain papers into micro-batches to prevent LLM context exhaustion & attention loss.
+  # subagent_batch_size: Number of papers analyzed per worker chunk [2 - 6] (Recommended: 3 - 4)
+  subagent_batch_size: 4
+  # subagent_max_workers: Concurrent parallel worker threads per domain [1 - 8]
+  subagent_max_workers: 4
 
   # Maximum Token Budget for Master Literature Review Chapter
-  # Recommended: 8192 tokens (produces an exhaustive 4,000+ word publication-ready thesis review).
-  orchestrator_max_tokens: 8192
+  # Recommended: 8000 tokens (produces an exhaustive publication-ready thesis review).
+  orchestrator_max_tokens: 8000
 
 
 # ==============================================================================

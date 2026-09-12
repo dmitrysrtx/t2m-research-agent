@@ -78,6 +78,20 @@ def validate_pipeline_config(cfg_data: Dict[str, Any]) -> List[str]:
             errors.append("Missing required parameter 'llm.model_name'.")
         if not str(llm.get("base_url", "")).strip():
             errors.append("Missing required parameter 'llm.base_url'.")
+        batch_size = llm.get("subagent_batch_size")
+        if batch_size is not None:
+            try:
+                if int(batch_size) < 1:
+                    errors.append("llm.subagent_batch_size must be an integer >= 1.")
+            except (ValueError, TypeError):
+                errors.append(f"llm.subagent_batch_size must be a valid integer, got: {batch_size}")
+        max_workers = llm.get("subagent_max_workers")
+        if max_workers is not None:
+            try:
+                if int(max_workers) < 1:
+                    errors.append("llm.subagent_max_workers must be an integer >= 1.")
+            except (ValueError, TypeError):
+                errors.append(f"llm.subagent_max_workers must be a valid integer, got: {max_workers}")
 
     # 4. Validate Search & Discovery Layer
     search = cfg_data.get("search_discovery") or {}

@@ -113,6 +113,7 @@ class Pipeline:
             import src.utils.pdf_downloader
             import src.core.pipeline_runner
             import src.agents.sub_agents
+            import src.agents.map_reduce
             import src.agents.orchestrator
             import src.telemetry
 
@@ -133,6 +134,7 @@ class Pipeline:
             importlib.reload(src.utils.text_formatters)
             importlib.reload(src.utils.pdf_downloader)
             importlib.reload(src.telemetry)
+            importlib.reload(src.agents.map_reduce)
             importlib.reload(src.agents.sub_agents)
             importlib.reload(src.agents.orchestrator)
             importlib.reload(src.core.pipeline_runner)

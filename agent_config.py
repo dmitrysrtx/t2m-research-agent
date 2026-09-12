@@ -12,8 +12,10 @@ BASE_URL = cfg.get("llm.base_url") or os.getenv("API_BASE_URL", "https://openrou
 MODEL_NAME = cfg.get("llm.model_name") or os.getenv("MODEL_NAME", "anthropic/claude-3.5-sonnet")
 SUBAGENT_TEMPERATURE = float(cfg.get("llm.subagent_temperature", 0.2))
 ORCHESTRATOR_TEMPERATURE = float(cfg.get("llm.orchestrator_temperature", 0.3))
-SUBAGENT_MAX_TOKENS = int(cfg.get("llm.subagent_max_tokens", 4096))
-ORCHESTRATOR_MAX_TOKENS = int(cfg.get("llm.orchestrator_max_tokens", 8192))
+SUBAGENT_BATCH_SIZE = int(cfg.get("llm.subagent_batch_size", 4))
+SUBAGENT_MAX_WORKERS = int(cfg.get("llm.subagent_max_workers", 4))
+SUBAGENT_MAX_TOKENS = cfg.get("llm.subagent_max_tokens")  # Deprecated in favor of chunked fanout
+ORCHESTRATOR_MAX_TOKENS = int(cfg.get("llm.orchestrator_max_tokens", 8000))
 
 # ==============================================================================
 # 2. Academic Search & Discovery Layer

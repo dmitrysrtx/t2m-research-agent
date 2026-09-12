@@ -1,3 +1,4 @@
+from typing import Optional
 from openai import OpenAI
 import os
 import sys
@@ -16,7 +17,14 @@ client = OpenAI(
     api_key=API_KEY,
 )
 
-def run_agent(system_prompt, user_prompt, agent_name="sub_agent", telemetry=None):
+def run_agent(
+    system_prompt: str,
+    user_prompt: str,
+    agent_name: str = "sub_agent",
+    temperature: Optional[float] = None,
+    max_tokens: Optional[int] = None,
+    telemetry = None
+):
     tm = telemetry or get_telemetry()
     if not API_KEY or API_KEY == "your_api_key_here":
         err = "API Key is missing. Please configure the .env file."
@@ -25,15 +33,20 @@ def run_agent(system_prompt, user_prompt, agent_name="sub_agent", telemetry=None
         
     start_t = time.time()
     tm.thinking(f"Analyzing prompt with {MODEL_NAME}...", source=agent_name)
+    temp = 0.2 if temperature is None else float(temperature)
+    create_kwargs = {
+        "model": MODEL_NAME,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        "temperature": temp,
+    }
+    if max_tokens is not None and int(max_tokens) > 0:
+        create_kwargs["max_tokens"] = int(max_tokens)
+
     try:
-        response = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            temperature=0.2
-        )
+        response = client.chat.completions.create(**create_kwargs)
         raw_content = response.choices[0].message.content
         content = raw_content if raw_content is not None else ""
         duration = time.time() - start_t
@@ -135,11 +148,14 @@ Extract vision pipeline specifications, sensor configurations, and keypoint trac
 
 
 def analyze_domain(papers_data, prompt, domain_name="domain", telemetry=None):
-    """Generic analyzer for any dynamically configured domain sub-agent."""
-    if not papers_data:
-        return f"No {domain_name} papers found."
-    agent_tag = f"sub_agent:{domain_name}" if not domain_name.startswith("sub_agent:") else domain_name
-    return run_agent(prompt, format_papers_for_prompt(papers_data), agent_name=agent_tag, telemetry=telemetry)
+    """Generic analyzer for any dynamically configured domain sub-agent with Hierarchical MapReduce."""
+    from src.agents.map_reduce import execute_subagent_mapreduce
+    return execute_subagent_mapreduce(
+        papers=papers_data,
+        prompt=prompt,
+        domain_name=domain_name,
+        telemetry=telemetry
+    )
 
 def analyze_kinematic(papers_data, custom_prompt=None, telemetry=None):
     return analyze_domain(papers_data, custom_prompt or KINEMATIC_SYSTEM_PROMPT, domain_name="kinematic", telemetry=telemetry)

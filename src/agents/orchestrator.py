@@ -63,7 +63,15 @@ def synthesize_literature_review(
 ---
 """
     system_prompt = custom_prompt or ORCHESTRATOR_SYSTEM_PROMPT
-    return run_agent(system_prompt, prompt, agent_name="orchestrator", telemetry=telemetry)
+    from agent_config import ORCHESTRATOR_MAX_TOKENS, ORCHESTRATOR_TEMPERATURE
+    return run_agent(
+        system_prompt,
+        prompt,
+        agent_name="orchestrator",
+        temperature=ORCHESTRATOR_TEMPERATURE,
+        max_tokens=ORCHESTRATOR_MAX_TOKENS,
+        telemetry=telemetry
+    )
 
 
 if __name__ == "__main__":

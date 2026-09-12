@@ -43,6 +43,8 @@ t2m-research-agent/
     │   ├── github_finder.py            # Multi-Tier GitHub Code Repository Discovery Engine
     │   └── citation_enricher.py        # CrossRef & ArXiv Academic Credibility Enricher
     ├── agents/                 # Layer 3: Domain Agents & Synthesis
+    │   ├── __init__.py         # Lazy package exports
+    │   ├── map_reduce.py       # Sub-Agent MapReduce & Parallel Worker Fanout
     │   ├── orchestrator.py     # Master Orchestrator prompt & synthesis logic
     │   └── sub_agents.py       # Domain expert sub-agents (Kinematic, Physics, RL, Pose)
     ├── core/                   # Layer 4: Configuration & Pipeline Execution Engine
@@ -66,6 +68,24 @@ t2m-research-agent/
 ```
 
 ## Architectural Decision Log
+
+### 2026-09-12: Hierarchical MapReduce & Sub-Agent Worker Fanout with Deterministic Table Merging
+- **Goal**: Resolve LLM context saturation and "lost-in-the-middle" attention loss during sub-agent analysis when processing 10-15+ domain papers simultaneously, implement a parallel chunked fanout pattern (3-4 papers per worker), deterministically merge structured Markdown extraction tables without token waste or dropped rows, eliminate the redundant `subagent_max_tokens` configuration cap, and standardize the Master Orchestrator token budget to 8,000 tokens.
+- **Root Causes & Key Changes**:
+  1. **Sub-Agent Context Degradation & Omission Risk**:
+     - Previously, all papers secured for a domain ($N = 10 \dots 15$) were stuffed into a single prompt for `analyze_domain()`.
+     - Large prompt contexts caused LLMs to rush extractions, omit equations/metrics, truncate tables, or overlook papers in the middle of the prompt.
+     - **Fix**: Designed and implemented `src/agents/map_reduce.py` with `chunk_papers(papers, batch_size=4)`. If `len(papers) > batch_size`, papers are split into micro-batches of 3-4 papers and executed concurrently across parallel worker threads (`ThreadPoolExecutor(max_workers=subagent_max_workers)`).
+  2. **Deterministic Markdown Table Merging (`merge_markdown_tables`)**:
+     - Instead of an expensive intermediate LLM reducer (which risks re-summarizing or dropping rows), implemented a zero-loss deterministic Markdown table merger.
+     - Extracts table header and column alignment divider from the first valid worker chunk, collects all data rows from subsequent worker chunks in strict order, strips outer code fences (` ```markdown `), and preserves notes.
+  3. **Token Budget Streamlining & Orchestrator Sizing**:
+     - Removed `subagent_max_tokens` from `pipeline_config.yaml` and `agent_config.py`. Sub-agent workers analyzing 3-4 papers naturally generate compact outputs (~500-1,000 tokens), rendering artificial output token limits unnecessary.
+     - Configured `orchestrator_max_tokens: 8000` in `pipeline_config.yaml` and explicitly passed `max_tokens=ORCHESTRATOR_MAX_TOKENS` and `temperature=ORCHESTRATOR_TEMPERATURE` (0.3) in `synthesize_literature_review()` to ensure exhaustive thesis review generation.
+  4. **Modularity & Architecture Compliance**:
+     - Created `src/agents/map_reduce.py` (< 195 lines) and `src/agents/__init__.py` using lazy `__getattr__` loading to prevent circular dependencies.
+     - Enforced `0o666` permissions and `dmitryx:dmitryx` ownership across all files.
+     - Standalone tests passing on `python -m src.agents.map_reduce`, `python -m src.agents.sub_agents`, `python -m src.agents.orchestrator`, `python -m src.core.config_validator`, and `python -m src.core.pipeline_runner`.
 
 ### 2026-09-12: Resolution of `[Errno 2]` Race Condition, OpenWebUI Metadata Task Interception & Mutex Concurrency Lock
 - **Goal**: Resolve fatal `[Errno 2] No such file or directory: 'Motion Guided 3D Pose Estimation from Videos.pdf'` crash during pipeline startup with `clear_articles_dir: true`, intercept OpenWebUI's nested `body["metadata"]["task"]` requests, enforce single-flight pipeline execution via a global mutex (`_PIPELINE_LOCK`), and make directory deletion in `pipeline_runner.py` completely resilient.

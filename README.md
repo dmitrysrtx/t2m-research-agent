@@ -32,8 +32,9 @@ Includes multi-fetcher academic search across **Google Scholar**, **IEEE Xplore*
 
 4. **Dynamic Multi-Agent RAG Pipeline ($1 \dots N$ Domains):**
    - **Dynamic Data-Driven Sub-Agents:** Configured entirely via the `sub_agents:` list in `pipeline_config.yaml`. Supports any number of specialized academic domains (default: *Kinematic Models, Physics & Diffusion, RL Character Control, 3D Pose Vision*). Automatically scales search queries, candidate pools, and intermediate synthesis sections.
+   - **Hierarchical MapReduce & Dynamic Sub-Agent Fanout (`src/agents/map_reduce.py`):** Automatically slices domain paper lists into focused micro-batches (3–4 papers per chunk) dispatched concurrently to worker threads (`ThreadPoolExecutor`). Eliminates LLM context overload and "lost-in-the-middle" attention degradation. Deterministically merges chunk tables into a unified domain extraction matrix with zero token waste.
    - **Strict Fail-Fast Configuration Validation:** Powered by `src/core/config_validator.py`, verifying all required fields (`id`, `name`, `search_queries`, `system_prompt`) on startup and halting execution with descriptive diagnostic errors if any configuration parameter is missing.
-   - **Master Orchestrator:** Dynamically compiles all specialist sub-agent reports into an academic Literature Review chapter with consolidated comparative tables and research gaps.
+   - **Master Orchestrator:** Dynamically compiles all specialist sub-agent reports into an academic Literature Review chapter with consolidated comparative tables and research gaps (up to 8,000 output tokens).
 
 ---
 
@@ -66,7 +67,9 @@ t2m-research-agent/
 │   │   ├── github_verifier.py    # URL Normalization & HTTP Streaming Liveness Prober
 │   │   ├── github_finder.py      # Multi-Tier GitHub Code Repository Discovery Engine
 │   │   └── citation_enricher.py  # CrossRef & ArXiv Academic Credibility Enricher
-│   ├── agents/                   # LLM SYNTHESIS AGENTS
+│   ├── agents/                   # LLM SYNTHESIS & MAPREDUCE AGENTS
+│   │   ├── __init__.py           # Lazy package exports
+│   │   ├── map_reduce.py         # Sub-Agent MapReduce & Parallel Worker Fanout
 │   │   ├── orchestrator.py       # Master Orchestrator LLM Agent
 │   │   └── sub_agents.py         # Specialized Domain Sub-Agents
 │   ├── telemetry/                # DECOUPLED TELEMETRY & EVENT DISPATCHER

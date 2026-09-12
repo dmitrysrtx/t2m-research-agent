@@ -25,8 +25,9 @@ This document provides a comprehensive inventory of **every configurable paramet
 | **API Key** | `OPENROUTER_API_KEY` | `""` | Secret String | Authentication token for the LLM provider. |
 | **Sub-Agent Temperature** | `SUBAGENT_TEMPERATURE` | `0.1` - `0.2` | Float `[0.0 - 1.0]` | Lower values enforce deterministic, hallucination-free extraction from paper abstracts and PDFs. |
 | **Orchestrator Temperature** | `ORCHESTRATOR_TEMPERATURE` | `0.3` | Float `[0.0 - 1.0]` | Slightly higher temperature allows creative academic prose and smooth comparative synthesis. |
-| **Sub-Agent Max Tokens** | `SUBAGENT_MAX_TOKENS` | `4096` | Integer `[1024 - 8192]` | Upper bound on output tokens per domain sub-agent table. |
-| **Orchestrator Max Tokens** | `ORCHESTRATOR_MAX_TOKENS` | `8192` | Integer `[2048 - 16384]` | Upper bound on tokens for the master literature review report. |
+| **Sub-Agent Batch Size** | `SUBAGENT_BATCH_SIZE` | `4` | Integer `[2 - 6]` | Number of papers analyzed per worker chunk during Hierarchical MapReduce fanout. |
+| **Sub-Agent Max Workers** | `SUBAGENT_MAX_WORKERS` | `4` | Integer `[1 - 8]` | Maximum concurrent worker threads executing per domain. |
+| **Orchestrator Max Tokens** | `ORCHESTRATOR_MAX_TOKENS` | `8000` | Integer `[2048 - 16384]` | Upper bound on output tokens for the master literature review report. |
 
 ---
 
